@@ -1,0 +1,2 @@
+[mongodb]
+migrations_path = "migrations"
