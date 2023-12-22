@@ -1,15 +1,19 @@
 package driver
 
-import "context"
+import (
+	"context"
+)
 
 type MigrationMetadata struct {
-	Name           string `bson:"name"`
-	Filename       string `bson:"filename"`
-	OriginalSource string `bson:"original_source"`
-	AppliedAt      int64  `bson:"applied_at"`
+	Name      string `bson:"name"`
+	Filename  string `bson:"filename"`
+	Source    string `bson:"source"`
+	AppliedAt int64  `bson:"applied_at"`
 }
 
-type AppliedMigrationsStore interface {
-	GetAppliedMigrationsMetadata(ctx context.Context) ([]MigrationMetadata, error)
-	SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []MigrationMetadata) error
+type Driver interface {
+	GetAppliedMigrationsMetadata(ctx context.Context) ([]*MigrationMetadata, error)
+	SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []*MigrationMetadata) error
+	WithTransaction(ctx context.Context, fn func() error) error
+	Handle(ctx context.Context) any
 }

@@ -17,6 +17,7 @@ func SetTestPath(configPath string) {
 
 type ConfigMongoDB struct {
 	URI            string `toml:"uri"`
+	Database       string `toml:"database"`
 	MigrationsPath string `toml:"migrations_path"`
 }
 

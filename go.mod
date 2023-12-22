@@ -5,8 +5,8 @@ go 1.21.3
 require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/pelletier/go-toml/v2 v2.1.1
+	github.com/risor-io/risor v1.2.0
 	github.com/spf13/cobra v1.8.0
-	github.com/traefik/yaegi v0.15.1
 	go.mongodb.org/mongo-driver v1.13.1
 )
 

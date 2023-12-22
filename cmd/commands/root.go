@@ -2,7 +2,6 @@ package commands
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/telemetrytv/graviton-cli/internal/migrations"
 )
 
 var rootCmd = &cobra.Command{
@@ -15,7 +14,5 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() error {
-	// return rootCmd.Execute()
-	migrations.TMP()
-	return nil
+	return rootCmd.Execute()
 }

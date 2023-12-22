@@ -6,26 +6,19 @@ import (
 	"github.com/telemetrytv/graviton-cli/internal/driver"
 )
 
-func Down(ctx context.Context, d driver.AppliedMigrationsStore, targetMigrationName string) error {
-	return nil
-}
-
-func GetApplied(ctx context.Context, driver driver.AppliedMigrationsStore) ([]*Migration, error) {
-	migrationsMetadata, err := driver.GetAppliedMigrationsMetadata(ctx)
+func GetApplied(ctx context.Context, d driver.Driver) ([]*Migration, error) {
+	appliedMigrationsMetadata, err := d.GetAppliedMigrationsMetadata(ctx)
 	if err != nil {
 		return nil, err
 	}
-	migrations := make([]*Migration, len(migrationsMetadata))
-	for i, migrationMetadata := range migrationsMetadata {
-		migrations[i] = &Migration{MigrationMetadata: &migrationMetadata}
-	}
-	return migrations, nil
-}
 
-func SetApplied(ctx context.Context, d driver.AppliedMigrationsStore, migrations []*Migration) error {
-	var migrationsMetadata []driver.MigrationMetadata
-	for _, migration := range migrations {
-		migrationsMetadata = append(migrationsMetadata, *migration.MigrationMetadata)
+	var appliedMigrations []*Migration
+	for _, appliedMigrationMetadata := range appliedMigrationsMetadata {
+		appliedMigrations = append(appliedMigrations, &Migration{
+			MigrationMetadata: appliedMigrationMetadata,
+			Script:            NewScript(ctx, d.Handle(ctx), appliedMigrationMetadata.Source),
+		})
 	}
-	return d.SetAppliedMigrationsMetadata(ctx, migrationsMetadata)
+
+	return appliedMigrations, nil
 }

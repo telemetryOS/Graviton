@@ -21,18 +21,6 @@ type Driver struct {
 	database *mongo.Database
 }
 
-type Handle struct {
-	driver *Driver
-}
-
-func (h *Handle) Client() *mongo.Client {
-	return h.driver.client
-}
-
-func (h *Handle) Database() *mongo.Database {
-	return h.driver.database
-}
-
 func New() *Driver {
 	return &Driver{}
 }
@@ -59,13 +47,13 @@ func (d *Driver) Disconnect(ctx context.Context) error {
 	return d.client.Disconnect(ctx)
 }
 
-func (d *Driver) Handle() *Handle {
-	return &Handle{driver: d}
+func (d *Driver) Handle(ctx context.Context) any {
+	return &Handle{ctx: ctx, driver: d}
 }
 
-func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]driver.MigrationMetadata, error) {
+func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*driver.MigrationMetadata, error) {
 	findOptions := options.Find().SetSort(bson.D{
-		{Key: "appliedAt", Value: 1},
+		{Key: "filename", Value: 1},
 	})
 	cur, err := d.getMigrationsCollection().Find(ctx, bson.M{}, findOptions)
 	if err != nil {
@@ -73,7 +61,7 @@ func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]driver.Mig
 	}
 	defer cur.Close(ctx)
 
-	var migrationsMetadata []driver.MigrationMetadata
+	var migrationsMetadata []*driver.MigrationMetadata
 	if err := cur.All(ctx, &migrationsMetadata); err != nil {
 		return nil, err
 	}
@@ -81,7 +69,7 @@ func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]driver.Mig
 	return migrationsMetadata, nil
 }
 
-func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []driver.MigrationMetadata) error {
+func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []*driver.MigrationMetadata) error {
 	session, err := d.client.StartSession()
 	if err != nil {
 		return err
@@ -96,6 +84,23 @@ func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMet
 			documents = append(documents, migrationMetadata)
 		}
 		migrationsCollection.InsertMany(ctx, documents)
+		return nil, nil
+	})
+
+	return nil
+}
+
+func (d *Driver) WithTransaction(ctx context.Context, fn func() error) error {
+	session, err := d.client.StartSession()
+	if err != nil {
+		return err
+	}
+	defer session.EndSession(ctx)
+
+	session.WithTransaction(ctx, func(ctx mongo.SessionContext) (any, error) {
+		if err := fn(); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	})
 
