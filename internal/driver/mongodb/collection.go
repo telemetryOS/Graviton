@@ -1,6 +1,10 @@
 package mongodb
 
-import "context"
+import (
+	"context"
+
+	"rogchap.com/v8go"
+)
 
 type Collection struct {
 	ctx    context.Context
@@ -20,4 +24,8 @@ func (c *Collection) Find(filter any) []map[string]any {
 	}
 
 	return results
+}
+
+func (c *Collection) V8Value(v8Iso *v8go.Isolate) *v8go.Value {
+	return nil
 }

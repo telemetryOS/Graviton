@@ -11,8 +11,8 @@ import (
 	"github.com/telemetrytv/graviton-cli/internal/driver"
 )
 
-// 000000000000-test.migration.risor
-var migrationNamePattern = regexp.MustCompile(`^\d{12}-[a-zA-Z-_]+\.migration\.risor$`)
+// 000000000000-test.migration.ts
+var migrationNamePattern = regexp.MustCompile(`^\d{12}-[a-zA-Z-_]+\.migration\.ts$`)
 
 func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*Migration, error) {
 	appliedMigrationsMetadata, err := d.GetAppliedMigrationsMetadata(ctx)
@@ -48,12 +48,11 @@ func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*M
 		}
 
 		migrationPath := filepath.Join(migrationsPath, migrationFilename)
-		migrationSrc, err := os.ReadFile(migrationPath)
+		script, err := BuildScriptFromFile(ctx, conf, d.Handle(ctx), migrationFilename, migrationPath)
 		if err != nil {
 			return nil, err
 		}
 
-		script := NewScript(ctx, d.Handle(ctx), string(migrationSrc))
 		name, err := script.Name()
 		if err != nil {
 			return nil, err
@@ -63,7 +62,7 @@ func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*M
 			MigrationMetadata: &driver.MigrationMetadata{
 				Name:     name,
 				Filename: migrationFilename,
-				Source:   string(migrationSrc),
+				Source:   script.src,
 			},
 			Script: script,
 		})

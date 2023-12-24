@@ -4,10 +4,11 @@ go 1.21.3
 
 require (
 	github.com/davecgh/go-spew v1.1.1
+	github.com/evanw/esbuild v0.19.10
 	github.com/pelletier/go-toml/v2 v2.1.1
-	github.com/risor-io/risor v1.2.0
 	github.com/spf13/cobra v1.8.0
 	go.mongodb.org/mongo-driver v1.13.1
+	rogchap.com/v8go v0.9.0
 )
 
 require (
@@ -20,7 +21,9 @@ require (
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20181117223130-1be2e3e5546d // indirect
+	go.kuoruan.net/v8go-polyfills v0.5.0 // indirect
 	golang.org/x/crypto v0.0.0-20220622213112-05595931fe9d // indirect
 	golang.org/x/sync v0.5.0 // indirect
+	golang.org/x/sys v0.5.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 )

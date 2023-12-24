@@ -1,6 +1,0 @@
-assert(up, 'Migration must define an up function')
-
-// NODE: Here we are executing the exected up function defined in the
-// migration. We are passing __g__ which contains the handle of the database
-// driver. __g__ is an injected global variable.
-up(__g__)

@@ -1,6 +1,8 @@
 package commands
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+)
 
 var setHeadCmd = &cobra.Command{
 	Use:   "set-head",

@@ -1,2 +1,0 @@
-assert(name, 'Migration must define a name')
-assert(up, 'Migration must define a up function')

@@ -1,9 +1,0 @@
-name := 'test'
-
-func up(db) {
-  print('up', db.Collection('test').Find({}))
-}
-
-func down(db) {
-  print('down')
-}

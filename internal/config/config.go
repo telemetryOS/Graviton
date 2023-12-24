@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -38,9 +39,10 @@ func GetFilePath() (string, error) {
 		return "", err
 	}
 
-	chunks := filepath.SplitList(dir)
-	for i := len(chunks) - 1; i >= 0; i-- {
-		targetPath := filepath.Join(filepath.Join(chunks[:i]...), CONFIG_NAME)
+	chunks := strings.Split(dir, string(filepath.Separator))
+	for i := len(chunks); i != -1; i -= 1 {
+		curPath := strings.Join(chunks[:i], string(filepath.Separator))
+		targetPath := filepath.Join(curPath, CONFIG_NAME)
 		if _, err := os.Stat(targetPath); err == nil {
 			return targetPath, nil
 		}

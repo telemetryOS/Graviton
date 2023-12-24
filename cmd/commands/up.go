@@ -38,7 +38,15 @@ var upCmd = &cobra.Command{
 
 		pendingMigrations, err := migrations.GetPending(ctx, conf, drv)
 		if err != nil {
+			if err, ok := err.(*migrations.BuildScriptError); ok {
+				err.Print()
+				return
+			}
 			panic(err)
+		}
+		if len(pendingMigrations) == 0 {
+			fmt.Println("No pending migrations")
+			return
 		}
 
 		targetMigrationIndex := -1
@@ -66,7 +74,7 @@ var upCmd = &cobra.Command{
 		err = drv.WithTransaction(ctx, func() error {
 			for _, pendingMigration := range pendingMigrations {
 				if err := pendingMigration.Script.Up(); err != nil {
-					return err
+					panic(err)
 				}
 			}
 
@@ -76,7 +84,7 @@ var upCmd = &cobra.Command{
 			}
 
 			if err := drv.SetAppliedMigrationsMetadata(ctx, newlyAppliedMigrationsMetadata); err != nil {
-				return err
+				panic(err)
 			}
 
 			return nil

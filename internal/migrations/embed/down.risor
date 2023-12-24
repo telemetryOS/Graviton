@@ -1,5 +1,0 @@
-assert(down, 'Migration is not reversible')
-// NODE: Here we are executing the exected down function defined in the
-// migration. We are passing __g__ which contains the handle of the database
-// driver. __g__ is an injected global variable.
-down(__g__)

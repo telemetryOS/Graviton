@@ -31,6 +31,10 @@ var statusCmd = &cobra.Command{
 
 		pendingMigrations, err := migrations.GetPending(ctx, conf, driver)
 		if err != nil {
+			if err, ok := err.(*migrations.BuildScriptError); ok {
+				err.Print()
+				return
+			}
 			panic(err)
 		}
 		pendingMigrationNames := []string{}
@@ -38,7 +42,7 @@ var statusCmd = &cobra.Command{
 			pendingMigrationNames = append(pendingMigrationNames, " - "+pendingMigration.Name)
 		}
 
-		appliedMigrations, err := migrations.GetApplied(ctx, driver)
+		appliedMigrations, err := migrations.GetApplied(ctx, conf, driver)
 		if err != nil {
 			panic(err)
 		}

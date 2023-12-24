@@ -48,7 +48,7 @@ func (d *Driver) Disconnect(ctx context.Context) error {
 }
 
 func (d *Driver) Handle(ctx context.Context) any {
-	return &Handle{ctx: ctx, driver: d}
+	return &MongoHandle{ctx: ctx, driver: d}
 }
 
 func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*driver.MigrationMetadata, error) {

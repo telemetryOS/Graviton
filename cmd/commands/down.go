@@ -36,7 +36,7 @@ var downCmd = &cobra.Command{
 			Database: conf.MongoDB.Database,
 		})
 
-		appliedMigrations, err := migrations.GetApplied(ctx, drv)
+		appliedMigrations, err := migrations.GetApplied(ctx, conf, drv)
 		if err != nil {
 			panic(err)
 		}
