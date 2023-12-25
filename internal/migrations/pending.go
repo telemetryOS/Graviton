@@ -12,7 +12,7 @@ import (
 )
 
 // 000000000000-test.migration.ts
-var migrationNamePattern = regexp.MustCompile(`^\d{12}-[a-zA-Z-_]+\.migration\.ts$`)
+var migrationNamePattern = regexp.MustCompile(`^\d{14}-[a-zA-Z-_]+\.migration\.ts$`)
 
 func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*Migration, error) {
 	appliedMigrationsMetadata, err := d.GetAppliedMigrationsMetadata(ctx)
@@ -40,11 +40,7 @@ func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*M
 	var pendingMigrations []*Migration
 	for _, migrationDir := range migrationsDir {
 		migrationFilename := migrationDir.Name()
-		if appliedMigrationsFilenames[migrationFilename] {
-			continue
-		}
-		if !migrationDir.Type().IsRegular() || !migrationNamePattern.MatchString(migrationFilename) {
-			fmt.Println("skipping", migrationFilename)
+		if appliedMigrationsFilenames[migrationFilename] || !migrationDir.Type().IsRegular() || !migrationNamePattern.MatchString(migrationFilename) {
 			continue
 		}
 
@@ -54,9 +50,15 @@ func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*M
 			return nil, err
 		}
 
+		name := script.Name()
+		if name == "" {
+			fmt.Printf("warning: skipping migration '%s'. It has no name set\n", migrationFilename)
+			continue
+		}
+
 		pendingMigrations = append(pendingMigrations, &Migration{
 			MigrationMetadata: &driver.MigrationMetadata{
-				Name:     script.Name(),
+				Name:     name,
 				Filename: migrationFilename,
 				Source:   script.src,
 			},

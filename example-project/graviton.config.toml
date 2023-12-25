@@ -1,0 +1,11 @@
+# Here is an example Graviton configuration file.
+# Currently just MongoDB is supported. But other
+# databases will be supported future. If more than
+# one database is added to a config (once others
+# are supported) you will need to specify which
+# database to use when running commands.
+
+[mongodb]
+uri = "mongodb://localhost:27017"
+database = "test"
+migrations_path = "migrations"

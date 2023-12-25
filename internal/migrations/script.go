@@ -105,20 +105,6 @@ func (s *Script) Evaluate() {
 	s.runtime.RunScript(s.origin, s.src)
 }
 
-func (s *Script) execute(scriptSrcSuffix string) (goja.Value, error) {
-	src := s.src + "\n" + scriptSrcSuffix
-
-	jsvm := goja.New()
-	jsvm.Set("console", JSConsole(jsvm))
-	jsvm.Set("__g__", IntoJS(jsvm, s.handle))
-	result, err := jsvm.RunScript(s.origin, src)
-	if err != nil {
-		return nil, err
-	}
-
-	return result, err
-}
-
 func JSConsole(jsvm *goja.Runtime) *goja.Object {
 	console := jsvm.NewObject()
 	console.Set("log", func(call goja.FunctionCall) goja.Value {
@@ -211,9 +197,7 @@ func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
 				return arr
 			}
 		})
-	case reflect.Ptr:
-		return intoJs(jsvm, vr.Elem())
-	case reflect.Interface:
+	case reflect.Ptr, reflect.Interface:
 		return intoJs(jsvm, vr.Elem())
 	case reflect.Array:
 		arr := jsvm.NewArray()
@@ -223,12 +207,6 @@ func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
 		return arr
 	default:
 		println("calling unfinished go type", vr.Kind().String())
-		panic("unreachable")
 		return goja.Undefined()
 	}
-}
-
-func FromJS(v *goja.Value, into any) {
-
-	// TODO: reflect into and set it's contents from v recursively
 }
