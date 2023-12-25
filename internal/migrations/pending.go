@@ -40,27 +40,23 @@ func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*M
 	var pendingMigrations []*Migration
 	for _, migrationDir := range migrationsDir {
 		migrationFilename := migrationDir.Name()
-		if appliedMigrationsFilenames[migrationFilename] ||
-			!migrationDir.Type().IsRegular() ||
-			!migrationNamePattern.MatchString(migrationFilename) {
+		if appliedMigrationsFilenames[migrationFilename] {
+			continue
+		}
+		if !migrationDir.Type().IsRegular() || !migrationNamePattern.MatchString(migrationFilename) {
 			fmt.Println("skipping", migrationFilename)
 			continue
 		}
 
 		migrationPath := filepath.Join(migrationsPath, migrationFilename)
-		script, err := BuildScriptFromFile(ctx, conf, d.Handle(ctx), migrationFilename, migrationPath)
-		if err != nil {
-			return nil, err
-		}
-
-		name, err := script.Name()
+		script, err := CompileScriptFromFile(ctx, conf, d.Handle(ctx), migrationFilename, migrationPath)
 		if err != nil {
 			return nil, err
 		}
 
 		pendingMigrations = append(pendingMigrations, &Migration{
 			MigrationMetadata: &driver.MigrationMetadata{
-				Name:     name,
+				Name:     script.Name(),
 				Filename: migrationFilename,
 				Source:   script.src,
 			},

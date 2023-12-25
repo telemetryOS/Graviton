@@ -1,5 +1,7 @@
 export const name = 'test'
 
+console.log('Hello from the migration')
+
 export function up(db) {
   console.log('up', db.collection('test').find({}))
 }

@@ -4,31 +4,38 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"reflect"
+	"strconv"
+	"strings"
+	"unicode"
 
+	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"
 	"github.com/telemetrytv/graviton-cli/internal/config"
-	"go.kuoruan.net/v8go-polyfills/console"
-	"go.kuoruan.net/v8go-polyfills/timers"
-	"rogchap.com/v8go"
 )
 
 const CACHE_PATH = ".graviton/cache"
 
 type Script struct {
-	config *config.Config
-	ctx    context.Context
-	handle any
-	src    string
-	origin string
+	config  *config.Config
+	ctx     context.Context
+	handle  any
+	src     string
+	origin  string
+	runtime *goja.Runtime
 }
 
 func NewScript(ctx context.Context, conf *config.Config, handle any, src, origin string) *Script {
-	return &Script{
+	script := &Script{
 		ctx:    ctx,
 		handle: handle,
 		src:    src,
 		origin: origin,
 	}
+
+	script.Evaluate()
+
+	return script
 }
 
 type BuildScriptMessage = api.Message
@@ -47,7 +54,7 @@ func (s *BuildScriptError) Print() {
 	}
 }
 
-func BuildScriptFromFile(ctx context.Context, conf *config.Config, handle any, origin, path string) (*Script, error) {
+func CompileScriptFromFile(ctx context.Context, conf *config.Config, handle any, origin, path string) (*Script, error) {
 	result := api.Build(api.BuildOptions{
 		EntryPoints: []string{path},
 		Bundle:      true,
@@ -61,50 +68,167 @@ func BuildScriptFromFile(ctx context.Context, conf *config.Config, handle any, o
 		return nil, &BuildScriptError{Errors: result.Errors}
 	}
 
-	return &Script{
+	script := &Script{
 		ctx:    ctx,
 		handle: handle,
 		config: conf,
 		src:    string(result.OutputFiles[0].Contents),
 		origin: origin,
-	}, nil
+	}
+	script.Evaluate()
+
+	return script, nil
 }
 
-func (s *Script) Name() (string, error) {
-	nameVal, err := s.execute("migration.name")
+func (s *Script) Name() string {
+	nameVal, err := s.runtime.RunString("migration.name")
 	if err != nil {
-		return "", err
+		panic(err)
 	}
-	return nameVal.String(), nil
+	return nameVal.String()
 }
 
 func (s *Script) Up() error {
-	_, err := s.execute("migration.up(__g__)")
+	_, err := s.runtime.RunString("migration.up(__g__)")
 	return err
 }
 
 func (s *Script) Down() error {
-	_, err := s.execute("migration.down(__g__)")
+	_, err := s.runtime.RunString("migration.down(__g__)")
 	return err
 }
 
-func (s *Script) execute(scriptSrcSuffix string) (*v8go.Value, error) {
+func (s *Script) Evaluate() {
+	s.runtime = goja.New()
+	s.runtime.Set("console", JSConsole(s.runtime))
+	s.runtime.Set("__g__", IntoJS(s.runtime, s.handle))
+	s.runtime.RunScript(s.origin, s.src)
+}
+
+func (s *Script) execute(scriptSrcSuffix string) (goja.Value, error) {
 	src := s.src + "\n" + scriptSrcSuffix
 
-	v8Iso := v8go.NewIsolate()
-	v8IsoGlobal := v8go.NewObjectTemplate(v8Iso)
-
-	if err := timers.InjectTo(v8Iso, v8IsoGlobal); err != nil {
+	jsvm := goja.New()
+	jsvm.Set("console", JSConsole(jsvm))
+	jsvm.Set("__g__", IntoJS(jsvm, s.handle))
+	result, err := jsvm.RunScript(s.origin, src)
+	if err != nil {
 		return nil, err
 	}
 
-	v8Ctx := v8go.NewContext(v8Iso)
-	if err := console.InjectTo(v8Ctx); err != nil {
-		return nil, err
-	}
-
-	v8Ctx.Global().Set("__g__", IntoV8(v8Ctx, s.handle))
-
-	result, err := v8Ctx.RunScript(src, s.origin)
 	return result, err
+}
+
+func JSConsole(jsvm *goja.Runtime) *goja.Object {
+	console := jsvm.NewObject()
+	console.Set("log", func(call goja.FunctionCall) goja.Value {
+		fmt.Println(call.Arguments)
+		return goja.Undefined()
+	})
+	return console
+}
+
+// IntoJS converts a go value into a goja value. Note that goja has it's own
+// method for doing this, but it doesn't copy the value, nor does it rename
+// properties to follow JS conventions.
+func IntoJS(jsvm *goja.Runtime, v any) goja.Value {
+	return intoJs(jsvm, reflect.ValueOf(v))
+}
+
+func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
+	switch vr.Kind() {
+	case reflect.Bool,
+		reflect.String,
+		reflect.Uint,
+		reflect.Uint8,
+		reflect.Uint16,
+		reflect.Uint32,
+		reflect.Uint64,
+		reflect.Int,
+		reflect.Int8,
+		reflect.Int16,
+		reflect.Int32,
+		reflect.Int64,
+		reflect.Float32,
+		reflect.Float64:
+		return jsvm.ToValue(vr.Interface())
+	case reflect.Slice:
+		arr := jsvm.NewArray()
+		for i := 0; i < vr.Len(); i += 1 {
+			arr.Set(strconv.Itoa(i), intoJs(jsvm, vr.Index(i)))
+		}
+		return arr
+	case reflect.Map:
+		obj := jsvm.NewObject()
+		for _, key := range vr.MapKeys() {
+			obj.Set(key.String(), intoJs(jsvm, vr.MapIndex(key)))
+		}
+		return obj
+	case reflect.Struct:
+		obj := jsvm.NewObject()
+		for i := 0; i < vr.NumField(); i += 1 {
+			field := vr.Type().Field(i)
+			if unicode.IsUpper(rune(field.Name[0])) {
+				jsName := strings.ToLower(field.Name[0:1]) + field.Name[1:]
+				obj.Set(jsName, intoJs(jsvm, vr.Field(i)))
+			}
+		}
+		for i := 0; i < vr.NumMethod(); i += 1 {
+			method := vr.Type().Method(i)
+			if unicode.IsUpper(rune(method.Name[0])) {
+				jsName := strings.ToLower(method.Name[0:1]) + method.Name[1:]
+				obj.Set(jsName, intoJs(jsvm, vr.Method(i)))
+			}
+		}
+		if vr.CanAddr() {
+			vrAddr := vr.Addr()
+			for i := 0; i < vrAddr.NumMethod(); i += 1 {
+				method := vrAddr.Type().Method(i)
+				if unicode.IsUpper(rune(method.Name[0])) {
+					jsName := strings.ToLower(method.Name[0:1]) + method.Name[1:]
+					obj.Set(jsName, intoJs(jsvm, vrAddr.Method(i)))
+				}
+			}
+		}
+		return obj
+	case reflect.Func:
+		return jsvm.ToValue(func(call goja.FunctionCall) goja.Value {
+			argsVrs := []reflect.Value{}
+			for _, arg := range call.Arguments {
+				argsVrs = append(argsVrs, reflect.ValueOf(arg.Export()))
+			}
+			rtnVrs := vr.Call(argsVrs)
+			switch len(rtnVrs) {
+			case 0:
+				return goja.Undefined()
+			case 1:
+				return intoJs(jsvm, rtnVrs[0])
+			default:
+				arr := jsvm.NewArray()
+				for i := 0; i < len(rtnVrs); i += 1 {
+					arr.Set(strconv.Itoa(i), intoJs(jsvm, rtnVrs[i]))
+				}
+				return arr
+			}
+		})
+	case reflect.Ptr:
+		return intoJs(jsvm, vr.Elem())
+	case reflect.Interface:
+		return intoJs(jsvm, vr.Elem())
+	case reflect.Array:
+		arr := jsvm.NewArray()
+		for i := 0; i < vr.Len(); i += 1 {
+			arr.Set(strconv.Itoa(i), intoJs(jsvm, vr.Index(i)))
+		}
+		return arr
+	default:
+		println("calling unfinished go type", vr.Kind().String())
+		panic("unreachable")
+		return goja.Undefined()
+	}
+}
+
+func FromJS(v *goja.Value, into any) {
+
+	// TODO: reflect into and set it's contents from v recursively
 }
