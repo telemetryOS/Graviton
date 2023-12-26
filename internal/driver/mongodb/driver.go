@@ -3,7 +3,7 @@ package mongodb
 import (
 	"context"
 
-	"github.com/telemetrytv/graviton-cli/internal/driver"
+	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -51,7 +51,7 @@ func (d *Driver) Handle(ctx context.Context) any {
 	return &MongoHandle{ctx: ctx, driver: d}
 }
 
-func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*driver.MigrationMetadata, error) {
+func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*migrationsmeta.MigrationMetadata, error) {
 	findOptions := options.Find().SetSort(bson.D{
 		{Key: "filename", Value: 1},
 	})
@@ -61,7 +61,7 @@ func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*driver.Mi
 	}
 	defer cur.Close(ctx)
 
-	var migrationsMetadata []*driver.MigrationMetadata
+	var migrationsMetadata []*migrationsmeta.MigrationMetadata
 	if err := cur.All(ctx, &migrationsMetadata); err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*driver.Mi
 	return migrationsMetadata, nil
 }
 
-func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []*driver.MigrationMetadata) error {
+func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []*migrationsmeta.MigrationMetadata) error {
 	session, err := d.client.StartSession()
 	if err != nil {
 		return err

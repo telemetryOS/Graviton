@@ -7,6 +7,7 @@ import (
 
 	"github.com/telemetrytv/graviton-cli/internal/config"
 	"github.com/telemetrytv/graviton-cli/internal/driver"
+	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
 
 func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*Migration, error) {
@@ -35,7 +36,7 @@ func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*M
 	var pendingMigrations []*Migration
 	for _, migrationDir := range migrationsDir {
 		migrationFilename := migrationDir.Name()
-		if appliedMigrationsFilenames[migrationFilename] || !migrationDir.Type().IsRegular() || !driver.MigrationNamePattern.MatchString(migrationFilename) {
+		if appliedMigrationsFilenames[migrationFilename] || !migrationDir.Type().IsRegular() || !migrationsmeta.MigrationNamePattern.MatchString(migrationFilename) {
 			continue
 		}
 
@@ -46,7 +47,7 @@ func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*M
 		}
 
 		pendingMigrations = append(pendingMigrations, &Migration{
-			MigrationMetadata: &driver.MigrationMetadata{
+			MigrationMetadata: &migrationsmeta.MigrationMetadata{
 				Filename: migrationFilename,
 				Source:   script.src,
 			},

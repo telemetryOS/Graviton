@@ -3,10 +3,10 @@ package migrations
 import (
 	_ "embed"
 
-	"github.com/telemetrytv/graviton-cli/internal/driver"
+	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
 
 type Migration struct {
-	*driver.MigrationMetadata
+	*migrationsmeta.MigrationMetadata
 	Script *Script
 }

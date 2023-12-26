@@ -3,13 +3,14 @@ package commands
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/telemetrytv/graviton-cli/internal/config"
-	"github.com/telemetrytv/graviton-cli/internal/driver"
 	"github.com/telemetrytv/graviton-cli/internal/driver/mongodb"
 	"github.com/telemetrytv/graviton-cli/internal/migrations"
+	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
 
 var downCmd = &cobra.Command{
@@ -45,6 +46,12 @@ var downCmd = &cobra.Command{
 			panic(err)
 		}
 
+		// NOTE: We reverse the order of the applied migrations so that we can
+		// roll them back - most recent first.
+		sort.Slice(appliedMigrations, func(i, j int) bool {
+			return appliedMigrations[i].Filename > appliedMigrations[j].Filename
+		})
+
 		targetMigrationIndex := -1
 		for i, appliedMigration := range appliedMigrations {
 			if appliedMigration.Name() == targetMigrationName {
@@ -58,7 +65,7 @@ var downCmd = &cobra.Command{
 		remainingMigrations := appliedMigrations[targetMigrationIndex+1:]
 		appliedMigrations = appliedMigrations[:targetMigrationIndex+1]
 
-		remainingMigrationsMetadata := []*driver.MigrationMetadata{}
+		remainingMigrationsMetadata := []*migrationsmeta.MigrationMetadata{}
 		for _, remainingMigration := range remainingMigrations {
 			remainingMigrationsMetadata = append(remainingMigrationsMetadata, remainingMigration.MigrationMetadata)
 		}

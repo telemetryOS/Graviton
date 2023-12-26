@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/telemetrytv/graviton-cli/internal/config"
-	"github.com/telemetrytv/graviton-cli/internal/driver"
 	"github.com/telemetrytv/graviton-cli/internal/driver/mongodb"
 	"github.com/telemetrytv/graviton-cli/internal/migrations"
+	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
 
 var upCmd = &cobra.Command{
@@ -80,9 +81,10 @@ var upCmd = &cobra.Command{
 				if err := pendingMigration.Script.Up(); err != nil {
 					panic(err)
 				}
+				pendingMigration.AppliedAt = time.Now()
 			}
 
-			var newlyAppliedMigrationsMetadata []*driver.MigrationMetadata
+			var newlyAppliedMigrationsMetadata []*migrationsmeta.MigrationMetadata
 			for _, pendingMigration := range pendingMigrations {
 				newlyAppliedMigrationsMetadata = append(newlyAppliedMigrationsMetadata, pendingMigration.MigrationMetadata)
 			}
