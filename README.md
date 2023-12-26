@@ -1,6 +1,8 @@
 # Graviton
 
-> The creator of light forged in the limitless darkness
+![Graviton Graphic](graviton.png)
+
+> The creator of light, forged in the limitless darkness
 
 Graviton is a simple migration tool. Create migration files in typescript and
 use the up command to apply them.
