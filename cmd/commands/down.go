@@ -29,6 +29,10 @@ var downCmd = &cobra.Command{
 		if err != nil {
 			panic(err)
 		}
+		if conf == nil {
+			fmt.Println("No configuration found. Create a graviton.toml in the root of your project.")
+			return
+		}
 
 		drv := mongodb.New()
 		drv.Connect(ctx, &mongodb.Options{
@@ -43,7 +47,7 @@ var downCmd = &cobra.Command{
 
 		targetMigrationIndex := -1
 		for i, appliedMigration := range appliedMigrations {
-			if appliedMigration.Name == targetMigrationName {
+			if appliedMigration.Name() == targetMigrationName {
 				targetMigrationIndex = i
 				break
 			}
@@ -62,7 +66,7 @@ var downCmd = &cobra.Command{
 		fmt.Println("Reversing migrations:")
 		appliedMigrationNames := []string{}
 		for _, appliedMigration := range appliedMigrations {
-			appliedMigrationNames = append(appliedMigrationNames, " - "+appliedMigration.Name)
+			appliedMigrationNames = append(appliedMigrationNames, " - "+appliedMigration.Name())
 		}
 		fmt.Println(strings.Join(appliedMigrationNames, "\n"))
 

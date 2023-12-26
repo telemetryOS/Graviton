@@ -80,14 +80,6 @@ func CompileScriptFromFile(ctx context.Context, conf *config.Config, handle any,
 	return script, nil
 }
 
-func (s *Script) Name() string {
-	nameVal, err := s.runtime.RunString("migration.name")
-	if err != nil {
-		panic(err)
-	}
-	return nameVal.String()
-}
-
 func (s *Script) Up() error {
 	_, err := s.runtime.RunString("migration.up(__g__)")
 	return err

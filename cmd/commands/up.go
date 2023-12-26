@@ -29,6 +29,10 @@ var upCmd = &cobra.Command{
 		if err != nil {
 			panic(err)
 		}
+		if conf == nil {
+			fmt.Println("No configuration found. Create a graviton.toml in the root of your project.")
+			return
+		}
 
 		drv := mongodb.New()
 		drv.Connect(ctx, &mongodb.Options{
@@ -54,7 +58,7 @@ var upCmd = &cobra.Command{
 			targetMigrationIndex = len(pendingMigrations) - 1
 		}
 		for i, pendingMigration := range pendingMigrations {
-			if pendingMigration.Name == targetMigrationName {
+			if pendingMigration.Name() == targetMigrationName {
 				targetMigrationIndex = i
 				break
 			}
@@ -67,7 +71,7 @@ var upCmd = &cobra.Command{
 		fmt.Println("Applying migrations:")
 		pendingMigrationNames := []string{}
 		for _, pendingMigration := range pendingMigrations {
-			pendingMigrationNames = append(pendingMigrationNames, " - "+pendingMigration.Name)
+			pendingMigrationNames = append(pendingMigrationNames, " - "+pendingMigration.Name())
 		}
 		fmt.Println(strings.Join(pendingMigrationNames, "\n"))
 

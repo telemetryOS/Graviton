@@ -6,9 +6,6 @@ import (
 	"github.com/telemetrytv/graviton-cli/internal/driver"
 )
 
-//go:embed template.ts
-var Template []byte
-
 type Migration struct {
 	*driver.MigrationMetadata
 	Script *Script

@@ -1,5 +1,3 @@
-export const name = ''
-
 export function up(db) {
   db.collection('test').insertOne({ name: 'one' })
 }
