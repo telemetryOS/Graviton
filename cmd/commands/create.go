@@ -48,9 +48,14 @@ var createCmd = &cobra.Command{
 			if err := os.WriteFile(tsConfigPath, migrations.TSConfigTemplate, 0644); err != nil {
 				panic(err)
 			}
+
+			typeDefPath := filepath.Join(conf.ProjectPath, conf.MongoDB.MigrationsPath, "migration.d.ts")
+			if err := os.WriteFile(typeDefPath, mongodb.MigrationTypeDefTemplate, 0644); err != nil {
+				panic(err)
+			}
 		}
 
-		if err := os.WriteFile(migrationPath, mongodb.Template, 0644); err != nil {
+		if err := os.WriteFile(migrationPath, mongodb.MigrationTemplate, 0644); err != nil {
 			panic(err)
 		}
 	},
