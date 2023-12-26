@@ -81,3 +81,6 @@ migrations are recorded as applied.
 
 This command is most useful when testing migrations, or skipping migrations
 that may have been manually applied.
+
+Note that if you'd like to set the head prior to the first applied migration,
+use `-` as the migration name.
