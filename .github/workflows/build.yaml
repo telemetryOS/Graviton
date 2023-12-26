@@ -1,0 +1,49 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        arch: [amd64]
+        include:
+          - os: ubuntu-latest
+            goos: linux
+          - os: macos-latest
+            goos: darwin
+          - arch: amd64
+            goarch: amd64
+
+    runs-on: ${{matrix.os}}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: 1.21.3
+
+      - name: Install Dependencies
+        run: go get -v -t ./...
+      
+      - name: Build
+        run: |
+          GOOS=${{matrix.goos}}
+          GOARCH=${{matrix.goarch}}
+          go build -v -o graviton-${{matrix.os}}-${{matrix.arch}} ./cmd/graviton.go
+
+      - name: Set Executable Permission
+        run: |
+          chmod +x graviton-${{matrix.os}}-${{matrix.arch}}
+      
+      - uses: actions/upload-artifact@v3
+        with:
+          name: graviton-${{matrix.os}}-${{matrix.arch}}
+          path: ./graviton-${{matrix.os}}-${{matrix.arch}}
