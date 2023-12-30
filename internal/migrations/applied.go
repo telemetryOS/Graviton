@@ -2,7 +2,11 @@ package migrations
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 
+	"github.com/telemetrytv/graviton-cli/internal/config"
 	"github.com/telemetrytv/graviton-cli/internal/driver"
 )
 
@@ -22,6 +26,50 @@ func GetApplied(ctx context.Context, d driver.Driver) ([]*Migration, error) {
 				appliedMigrationMetadata.Source,
 				appliedMigrationMetadata.Filename,
 			),
+		})
+	}
+
+	return appliedMigrations, nil
+}
+
+func GetAppliedWithDownFuncFromDisk(ctx context.Context, projectPath string, conf *config.DatabaseConfig, d driver.Driver) ([]*Migration, error) {
+	appliedMigrationsMetadata, err := d.GetAppliedMigrationsMetadata(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	migrationsPath := filepath.Join(projectPath, conf.MigrationsPath)
+
+	var appliedMigrations []*Migration
+	for _, appliedMigrationMetadata := range appliedMigrationsMetadata {
+		migrationPath := filepath.Join(migrationsPath, appliedMigrationMetadata.Filename)
+
+		stat, err := os.Stat(migrationPath)
+		if err != nil {
+			return nil, err
+		}
+		if !stat.Mode().IsRegular() {
+			fmt.Println(
+				"Could not collect the nessisary down functions for applied migrations " +
+					"on disk. Missing migration file `" + appliedMigrationMetadata.Filename +
+					"` from migrations directory `" + conf.MigrationsPath + "`",
+			)
+			os.Exit(1)
+		}
+
+		script, err := CompileScriptFromFile(
+			ctx,
+			d.Handle(ctx),
+			appliedMigrationMetadata.Filename,
+			migrationPath,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		appliedMigrations = append(appliedMigrations, &Migration{
+			MigrationMetadata: appliedMigrationMetadata,
+			Script:            script,
 		})
 	}
 

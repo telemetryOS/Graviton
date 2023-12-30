@@ -14,6 +14,8 @@ import (
 	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
 
+var useDownFnOnDisk bool
+
 var downCmd = &cobra.Command{
 	Use:   "down <migration>",
 	Short: "reverses applied migrations up to and including the specified migration",
@@ -48,7 +50,13 @@ var downCmd = &cobra.Command{
 				panic(err)
 			}
 
-			appliedMigrations, err := migrations.GetApplied(ctx, drv)
+			var appliedMigrations []*migrations.Migration
+			var err error
+			if useDownFnOnDisk {
+				appliedMigrations, err = migrations.GetAppliedWithDownFuncFromDisk(ctx, conf.ProjectPath, databaseConf, drv)
+			} else {
+				appliedMigrations, err = migrations.GetApplied(ctx, drv)
+			}
 			if err != nil {
 				panic(err)
 			}
@@ -79,6 +87,9 @@ var downCmd = &cobra.Command{
 			}
 
 			fmt.Println("Reverting migrations for database `" + databaseName + "` to `" + targetMigrationName + "`")
+			if useDownFnOnDisk {
+				fmt.Println("WARN: Using down functions from disk")
+			}
 			appliedMigrationNames := []string{}
 			for _, appliedMigration := range appliedMigrations {
 				appliedMigrationNames = append(appliedMigrationNames, " --- "+appliedMigration.Name())
@@ -110,5 +121,8 @@ var downCmd = &cobra.Command{
 }
 
 func init() {
+	flags := downCmd.Flags()
+	flags.BoolVar(&useDownFnOnDisk, "from-disk", false, "use migrations on disk instead of migrations in the database")
+
 	rootCmd.AddCommand(downCmd)
 }
