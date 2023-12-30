@@ -1,5 +1,7 @@
 package migrations
 
+// TODO: Add flag to allow rolling back a migration from disk
+
 import (
 	"context"
 	_ "embed"
@@ -11,13 +13,11 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"
-	"github.com/telemetrytv/graviton-cli/internal/config"
 )
 
 const CACHE_PATH = ".graviton/cache"
 
 type Script struct {
-	config  *config.Config
 	ctx     context.Context
 	handle  any
 	src     string
@@ -25,7 +25,7 @@ type Script struct {
 	runtime *goja.Runtime
 }
 
-func NewScript(ctx context.Context, conf *config.Config, handle any, src, origin string) *Script {
+func NewScript(ctx context.Context, handle any, src, origin string) *Script {
 	script := &Script{
 		ctx:    ctx,
 		handle: handle,
@@ -54,7 +54,7 @@ func (s *BuildScriptError) Print() {
 	}
 }
 
-func CompileScriptFromFile(ctx context.Context, conf *config.Config, handle any, origin, path string) (*Script, error) {
+func CompileScriptFromFile(ctx context.Context, handle any, origin, path string) (*Script, error) {
 	result := api.Build(api.BuildOptions{
 		EntryPoints: []string{path},
 		Bundle:      true,
@@ -71,7 +71,6 @@ func CompileScriptFromFile(ctx context.Context, conf *config.Config, handle any,
 	script := &Script{
 		ctx:    ctx,
 		handle: handle,
-		config: conf,
 		src:    string(result.OutputFiles[0].Contents),
 		origin: origin,
 	}

@@ -2,11 +2,13 @@ package commands
 
 import (
 	"context"
+	"os"
 	"time"
 
+	"github.com/risor-io/risor/modules/fmt"
 	"github.com/spf13/cobra"
 	"github.com/telemetrytv/graviton-cli/internal/config"
-	"github.com/telemetrytv/graviton-cli/internal/driver/mongodb"
+	"github.com/telemetrytv/graviton-cli/internal/driver"
 	"github.com/telemetrytv/graviton-cli/internal/migrations"
 	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
@@ -17,7 +19,8 @@ var setHeadCmd = &cobra.Command{
 	Long:  "Allows setting which migrations have been applied without running them by selecting a new head",
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) < 1 {
-			panic("missing migration argument")
+			fmt.Println("missing migration argument")
+			os.Exit(1)
 		}
 		migrationName := args[0]
 
@@ -28,23 +31,25 @@ var setHeadCmd = &cobra.Command{
 			panic(err)
 		}
 
-		drv := mongodb.New()
-		drv.Connect(ctx, &mongodb.Options{
-			URI:      conf.MongoDB.URI,
-			Database: conf.MongoDB.Database,
-		})
+		databaseName := TargetDatabaseName(conf)
+		databaseConf := conf.Database(databaseName)
+
+		drv := driver.FromDatabaseConfig(databaseConf)
+		if err := drv.Connect(ctx); err != nil {
+			panic(err)
+		}
 
 		if migrationName == "-" {
 			drv.SetAppliedMigrationsMetadata(ctx, []*migrationsmeta.MigrationMetadata{})
 			return
 		}
 
-		pendingMigrations, err := migrations.GetPending(ctx, conf, drv)
+		pendingMigrations, err := migrations.GetPending(ctx, conf.ProjectPath, databaseConf, drv)
 		if err != nil {
 			panic(err)
 		}
 
-		appliedMigrations, err := migrations.GetApplied(ctx, conf, drv)
+		appliedMigrations, err := migrations.GetApplied(ctx, drv)
 		if err != nil {
 			panic(err)
 		}

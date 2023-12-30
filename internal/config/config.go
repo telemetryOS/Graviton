@@ -10,30 +10,28 @@ import (
 
 const CONFIG_NAME = "graviton.config.toml"
 
-var testConfigPath string
+type DatabaseKind string
 
-func SetTestPath(configPath string) {
-	testConfigPath = configPath
-}
-
-type ConfigMongoDB struct {
-	URI            string `toml:"uri"`
-	Database       string `toml:"database"`
-	MigrationsPath string `toml:"migrations_path"`
-}
+const (
+	DatabaseKindMongoDB DatabaseKind = "mongodb"
+)
 
 type Config struct {
 	ProjectPath string
-	MongoDB     *ConfigMongoDB `toml:"mongodb"`
+	Databases   []*DatabaseConfig `toml:"databases"`
+}
+
+type DatabaseConfig struct {
+	Name           string       `toml:"name"`
+	Kind           DatabaseKind `toml:"kind"`
+	ConnectionUrl  string       `toml:"connection_url"`
+	DatabaseName   string       `toml:"database_name"`
+	MigrationsPath string       `toml:"migrations_path"`
 }
 
 // GetFilePath returns the path to Graviton's config within the current project
 // if one exists.
 func GetFilePath() (string, error) {
-	if testConfigPath != "" {
-		return testConfigPath, nil
-	}
-
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -81,4 +79,13 @@ func Load() (*Config, error) {
 	config.ProjectPath = filepath.Dir(configPath)
 
 	return &config, nil
+}
+
+func (c *Config) Database(name string) *DatabaseConfig {
+	for _, database := range c.Databases {
+		if database.Name == name {
+			return database
+		}
+	}
+	return nil
 }

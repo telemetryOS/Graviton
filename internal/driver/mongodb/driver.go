@@ -3,6 +3,7 @@ package mongodb
 import (
 	"context"
 
+	"github.com/telemetrytv/graviton-cli/internal/config"
 	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -17,17 +18,18 @@ type Options struct {
 }
 
 type Driver struct {
+	config   *config.DatabaseConfig
 	client   *mongo.Client
 	database *mongo.Database
 }
 
-func New() *Driver {
-	return &Driver{}
+func New(conf *config.DatabaseConfig) *Driver {
+	return &Driver{config: conf}
 }
 
-func (d *Driver) Connect(ctx context.Context, opts *Options) error {
+func (d *Driver) Connect(ctx context.Context) error {
 	clientOptions := options.Client().
-		ApplyURI(opts.URI)
+		ApplyURI(d.config.ConnectionUrl)
 
 	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
@@ -35,7 +37,7 @@ func (d *Driver) Connect(ctx context.Context, opts *Options) error {
 	}
 
 	d.client = client
-	d.database = client.Database(opts.Database)
+	d.database = client.Database(d.config.DatabaseName)
 
 	return nil
 }

@@ -9,8 +9,18 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
+      "cwd": "${workspaceFolder}/example-project",
       "program": "${workspaceFolder}/cmd/graviton.go",
       "args": ["up"]
+    },
+    {
+      "name": "Status",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "cwd": "${workspaceFolder}/example-project",
+      "program": "${workspaceFolder}/cmd/graviton.go",
+      "args": ["status"]
     }
   ]
 }

@@ -10,7 +10,7 @@ import (
 	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
 
-func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*Migration, error) {
+func GetPending(ctx context.Context, projectPath string, conf *config.DatabaseConfig, d driver.Driver) ([]*Migration, error) {
 	appliedMigrationsMetadata, err := d.GetAppliedMigrationsMetadata(ctx)
 	if err != nil {
 		return nil, err
@@ -20,14 +20,11 @@ func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*M
 		appliedMigrationsFilenames[appliedMigrationMetadata.Filename] = true
 	}
 
-	if conf.MongoDB == nil {
-		conf.MongoDB = &config.ConfigMongoDB{}
-	}
-	if conf.MongoDB.MigrationsPath == "" {
-		conf.MongoDB.MigrationsPath = "migrations"
+	if conf.MigrationsPath == "" {
+		conf.MigrationsPath = "migrations"
 	}
 
-	migrationsPath := filepath.Join(conf.ProjectPath, conf.MongoDB.MigrationsPath)
+	migrationsPath := filepath.Join(projectPath, conf.MigrationsPath)
 	migrationsDir, err := os.ReadDir(migrationsPath)
 	if err != nil {
 		return nil, err
@@ -41,7 +38,7 @@ func GetPending(ctx context.Context, conf *config.Config, d driver.Driver) ([]*M
 		}
 
 		migrationPath := filepath.Join(migrationsPath, migrationFilename)
-		script, err := CompileScriptFromFile(ctx, conf, d.Handle(ctx), migrationFilename, migrationPath)
+		script, err := CompileScriptFromFile(ctx, d.Handle(ctx), migrationFilename, migrationPath)
 		if err != nil {
 			return nil, err
 		}

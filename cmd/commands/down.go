@@ -3,12 +3,13 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/telemetrytv/graviton-cli/internal/config"
-	"github.com/telemetrytv/graviton-cli/internal/driver/mongodb"
+	"github.com/telemetrytv/graviton-cli/internal/driver"
 	"github.com/telemetrytv/graviton-cli/internal/migrations"
 	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
@@ -35,68 +36,76 @@ var downCmd = &cobra.Command{
 			return
 		}
 
-		drv := mongodb.New()
-		drv.Connect(ctx, &mongodb.Options{
-			URI:      conf.MongoDB.URI,
-			Database: conf.MongoDB.Database,
-		})
-
-		appliedMigrations, err := migrations.GetApplied(ctx, conf, drv)
-		if err != nil {
-			panic(err)
-		}
-
-		// NOTE: We reverse the order of the applied migrations so that we can
-		// roll them back - most recent first.
-		sort.Slice(appliedMigrations, func(i, j int) bool {
-			return appliedMigrations[i].Filename > appliedMigrations[j].Filename
-		})
-
-		targetMigrationIndex := -1
-		for i, appliedMigration := range appliedMigrations {
-			if appliedMigration.Name() == targetMigrationName {
-				targetMigrationIndex = i
-				break
+		databaseNames := TargetDatabaseNames(conf)
+		for i, databaseName := range databaseNames {
+			if i != 0 {
+				fmt.Println("---")
 			}
-		}
-		if targetMigrationIndex == -1 {
-			panic("target migration not found")
-		}
-		remainingMigrations := appliedMigrations[targetMigrationIndex+1:]
-		appliedMigrations = appliedMigrations[:targetMigrationIndex+1]
 
-		remainingMigrationsMetadata := []*migrationsmeta.MigrationMetadata{}
-		for _, remainingMigration := range remainingMigrations {
-			remainingMigrationsMetadata = append(remainingMigrationsMetadata, remainingMigration.MigrationMetadata)
-		}
+			databaseConf := conf.Database(databaseName)
+			drv := driver.FromDatabaseConfig(databaseConf)
+			if err := drv.Connect(ctx); err != nil {
+				panic(err)
+			}
 
-		fmt.Println("Reversing migrations:")
-		appliedMigrationNames := []string{}
-		for _, appliedMigration := range appliedMigrations {
-			appliedMigrationNames = append(appliedMigrationNames, " - "+appliedMigration.Name())
-		}
-		fmt.Println(strings.Join(appliedMigrationNames, "\n"))
+			appliedMigrations, err := migrations.GetApplied(ctx, drv)
+			if err != nil {
+				panic(err)
+			}
 
-		err = drv.WithTransaction(ctx, func() error {
+			// NOTE: We reverse the order of the applied migrations so that we can
+			// roll them back - most recent first.
+			sort.Slice(appliedMigrations, func(i, j int) bool {
+				return appliedMigrations[i].Filename > appliedMigrations[j].Filename
+			})
+
+			targetMigrationIndex := -1
+			for i, appliedMigration := range appliedMigrations {
+				if appliedMigration.Name() == targetMigrationName {
+					targetMigrationIndex = i
+					break
+				}
+			}
+			if targetMigrationIndex == -1 {
+				fmt.Println("target migration not found")
+				os.Exit(1)
+			}
+			remainingMigrations := appliedMigrations[targetMigrationIndex+1:]
+			appliedMigrations = appliedMigrations[:targetMigrationIndex+1]
+
+			remainingMigrationsMetadata := []*migrationsmeta.MigrationMetadata{}
+			for _, remainingMigration := range remainingMigrations {
+				remainingMigrationsMetadata = append(remainingMigrationsMetadata, remainingMigration.MigrationMetadata)
+			}
+
+			fmt.Println("Reverting migrations for database `" + databaseName + "` to `" + targetMigrationName + "`")
+			appliedMigrationNames := []string{}
 			for _, appliedMigration := range appliedMigrations {
-				err := appliedMigration.Script.Down()
-				if err != nil {
-					return err
-				}
-
-				err = drv.SetAppliedMigrationsMetadata(ctx, remainingMigrationsMetadata)
-				if err != nil {
-					return err
-				}
+				appliedMigrationNames = append(appliedMigrationNames, " --- "+appliedMigration.Name())
 			}
-			return nil
-		})
+			fmt.Println(strings.Join(appliedMigrationNames, "\n"))
 
-		if err != nil {
-			panic(err)
+			err = drv.WithTransaction(ctx, func() error {
+				for _, appliedMigration := range appliedMigrations {
+					err := appliedMigration.Script.Down()
+					if err != nil {
+						return err
+					}
+
+					err = drv.SetAppliedMigrationsMetadata(ctx, remainingMigrationsMetadata)
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+
+			if err != nil {
+				panic(err)
+			}
+
+			fmt.Println("Reverted migrations for database `" + databaseName + "` to `" + targetMigrationName + "`")
 		}
-
-		fmt.Println("Migration complete")
 	},
 }
 
