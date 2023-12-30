@@ -62,10 +62,11 @@ func TargetDatabaseName(config *config.Config) string {
 
 	fmt.Println("Target `" + TargetDatabaseNamesStr + "` did not match any databases from the configuration")
 	os.Exit(1)
+	return ""
 }
 
 func Execute() error {
-	flags := rootCmd.Flags()
+	flags := rootCmd.PersistentFlags()
 	flags.StringVarP(&TargetDatabaseNamesStr, "target", "t", "", "Target database names")
 
 	return rootCmd.Execute()

@@ -26,5 +26,6 @@ func FromDatabaseConfig(conf *config.DatabaseConfig) Driver {
 	default:
 		fmt.Println("Unknown database kind: " + string(conf.Kind))
 		os.Exit(1)
+		return nil
 	}
 }

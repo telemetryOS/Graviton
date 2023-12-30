@@ -2,10 +2,10 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
-	"github.com/risor-io/risor/modules/fmt"
 	"github.com/spf13/cobra"
 	"github.com/telemetrytv/graviton-cli/internal/config"
 	"github.com/telemetrytv/graviton-cli/internal/driver"
