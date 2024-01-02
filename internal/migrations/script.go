@@ -17,20 +17,27 @@ import (
 
 const CACHE_PATH = ".graviton/cache"
 
+var dummyJsFn = func(call goja.FunctionCall) goja.Value { return goja.Undefined() }
+var dummyJsCtor = func(call goja.ConstructorCall) *goja.Object { return nil }
+var dummyJsFnWithRuntime = func(call goja.FunctionCall, jsvm *goja.Runtime) goja.Value { return goja.Undefined() }
+var dummyJsCtorWithRuntime = func(call goja.ConstructorCall, jsvm *goja.Runtime) *goja.Object { return nil }
+
 type Script struct {
 	ctx     context.Context
+	globals map[string]any
 	handle  any
 	src     string
 	origin  string
 	runtime *goja.Runtime
 }
 
-func NewScript(ctx context.Context, handle any, src, origin string) *Script {
+func NewScript(ctx context.Context, globals map[string]any, handle any, src, origin string) *Script {
 	script := &Script{
-		ctx:    ctx,
-		handle: handle,
-		src:    src,
-		origin: origin,
+		ctx:     ctx,
+		globals: globals,
+		handle:  handle,
+		src:     src,
+		origin:  origin,
 	}
 
 	script.Evaluate()
@@ -93,6 +100,10 @@ func (s *Script) Evaluate() {
 	s.runtime = goja.New()
 	s.runtime.Set("console", JSConsole(s.runtime))
 	s.runtime.Set("__g__", IntoJS(s.runtime, s.handle))
+	for name, value := range s.globals {
+		s.runtime.Set(name, IntoJS(s.runtime, value))
+	}
+
 	s.runtime.RunScript(s.origin, s.src)
 }
 
@@ -169,25 +180,36 @@ func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
 		}
 		return obj
 	case reflect.Func:
-		return jsvm.ToValue(func(call goja.FunctionCall) goja.Value {
-			argsVrs := []reflect.Value{}
-			for _, arg := range call.Arguments {
-				argsVrs = append(argsVrs, reflect.ValueOf(arg.Export()))
-			}
-			rtnVrs := vr.Call(argsVrs)
-			switch len(rtnVrs) {
-			case 0:
-				return goja.Undefined()
-			case 1:
-				return intoJs(jsvm, rtnVrs[0])
-			default:
-				arr := jsvm.NewArray()
-				for i := 0; i < len(rtnVrs); i += 1 {
-					arr.Set(strconv.Itoa(i), intoJs(jsvm, rtnVrs[i]))
+		tr := vr.Type()
+
+		switch {
+		case tr.ConvertibleTo(reflect.TypeOf(dummyJsCtor)),
+			tr.ConvertibleTo(reflect.TypeOf(dummyJsFn)),
+			tr.ConvertibleTo(reflect.TypeOf(dummyJsCtorWithRuntime)),
+			tr.ConvertibleTo(reflect.TypeOf(dummyJsFnWithRuntime)):
+			return jsvm.ToValue(vr)
+
+		default:
+			return jsvm.ToValue(func(call goja.FunctionCall) goja.Value {
+				argsVrs := []reflect.Value{}
+				for _, arg := range call.Arguments {
+					argsVrs = append(argsVrs, reflect.ValueOf(fromJs(jsvm, arg)))
 				}
-				return arr
-			}
-		})
+				rtnVrs := vr.Call(argsVrs)
+				switch len(rtnVrs) {
+				case 0:
+					return goja.Undefined()
+				case 1:
+					return intoJs(jsvm, rtnVrs[0])
+				default:
+					arr := jsvm.NewArray()
+					for i := 0; i < len(rtnVrs); i += 1 {
+						arr.Set(strconv.Itoa(i), intoJs(jsvm, rtnVrs[i]))
+					}
+					return arr
+				}
+			})
+		}
 	case reflect.Ptr, reflect.Interface:
 		return intoJs(jsvm, vr.Elem())
 	case reflect.Array:
@@ -199,5 +221,16 @@ func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
 	default:
 		println("calling unfinished go type", vr.Kind().String())
 		return goja.Undefined()
+	}
+}
+
+func fromJs(jsvm *goja.Runtime, val goja.Value) any {
+	switch {
+	// FIXME: We need to convert things like objects and special goja types
+	// to a reasonable go type
+	// case val.ToObject(jsvm)
+	// case val.ExportType().AssignableTo()
+	default:
+		return val.Export()
 	}
 }

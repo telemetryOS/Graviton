@@ -53,6 +53,12 @@ func (d *Driver) Handle(ctx context.Context) any {
 	return &MongoHandle{ctx: ctx, driver: d}
 }
 
+func (d *Driver) Globals(ctx context.Context) map[string]any {
+	globals := map[string]any{}
+	globals["ObjectId"] = ObjectId
+	return globals
+}
+
 func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*migrationsmeta.MigrationMetadata, error) {
 	findOptions := options.Find().SetSort(bson.D{
 		{Key: "filename", Value: 1},

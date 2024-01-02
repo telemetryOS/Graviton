@@ -6,6 +6,12 @@ type InsertOneResult = {
   insertedID: string;
 }
 
+type ObjectId = {
+  new(hexValue: string): ObjectId;
+  toHexString(): string;
+  toString(): string;
+}
+
 type Collection = {
   insertMany(docs: Record<string, any>[]): InsertManyResult;
   insertOne(docs: Record<string, any>): InsertOneResult;

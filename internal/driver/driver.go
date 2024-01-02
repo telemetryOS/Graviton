@@ -17,6 +17,7 @@ type Driver interface {
 	SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []*migrationsmeta.MigrationMetadata) error
 	WithTransaction(ctx context.Context, fn func() error) error
 	Handle(ctx context.Context) any
+	Globals(ctx context.Context) map[string]any
 }
 
 func FromDatabaseConfig(conf *config.DatabaseConfig) Driver {

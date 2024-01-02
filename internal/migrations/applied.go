@@ -22,6 +22,7 @@ func GetApplied(ctx context.Context, d driver.Driver) ([]*Migration, error) {
 			MigrationMetadata: appliedMigrationMetadata,
 			Script: NewScript(
 				ctx,
+				d.Globals(ctx),
 				d.Handle(ctx),
 				appliedMigrationMetadata.Source,
 				appliedMigrationMetadata.Filename,

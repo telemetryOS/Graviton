@@ -1,6 +1,7 @@
 package config
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,8 +72,25 @@ func Load() (*Config, error) {
 	}
 	defer configFile.Close()
 
+	configSrc, err := io.ReadAll(configFile)
+	if err != nil {
+		return nil, err
+	}
+
+	// FIXME: THIS SUCKS, we need fallbacks
+	// template in environment variables
+	envVars := os.Environ()
+	for _, envVar := range envVars {
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		configSrc = []byte(strings.ReplaceAll(string(configSrc), "${"+parts[0]+"}", parts[1]))
+	}
+	configSrcReader := strings.NewReader(string(configSrc))
+
 	var config Config
-	if err := toml.NewDecoder(configFile).Decode(&config); err != nil {
+	if err := toml.NewDecoder(configSrcReader).Decode(&config); err != nil {
 		return nil, err
 	}
 
