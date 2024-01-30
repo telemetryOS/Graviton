@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -77,7 +76,7 @@ var upCmd = &cobra.Command{
 		}
 		if targetMigrationIndex == -1 {
 			fmt.Println("target migration not found")
-			os.Exit(1)
+			return
 		}
 		applyMigrations = applyMigrations[:targetMigrationIndex+1]
 

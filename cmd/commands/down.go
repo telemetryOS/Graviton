@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -94,7 +93,7 @@ var downCmd = &cobra.Command{
 			}
 			if targetMigrationIndex == -1 {
 				fmt.Println("target migration not found")
-				os.Exit(1)
+				return
 			}
 
 			rollbackMigrations = rollbackMigrations[:targetMigrationIndex]

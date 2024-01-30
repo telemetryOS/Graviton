@@ -43,7 +43,7 @@ var createCmd = &cobra.Command{
 		if _, err := os.Stat(migrationPath); err != nil {
 			if !os.IsNotExist(err) {
 				fmt.Println("Cannot create migration: " + err.Error())
-				os.Exit(1)
+				return
 			}
 			if err := os.MkdirAll(filepath.Dir(migrationPath), 0755); err != nil {
 				panic(err)
