@@ -51,7 +51,7 @@ func GetAppliedWithDownFuncFromDisk(ctx context.Context, projectPath string, con
 		}
 		if !stat.Mode().IsRegular() {
 			fmt.Println(
-				"Could not collect the nessisary down functions for applied migrations " +
+				"Could not collect the necessary down functions for applied migrations " +
 					"on disk. Missing migration file `" + appliedMigrationMetadata.Filename +
 					"` from migrations directory `" + conf.MigrationsPath + "`",
 			)

@@ -37,7 +37,7 @@ func assertConfig() *config.Config {
 	}
 	if conf == nil {
 		fmt.Println("No configuration found. Create a graviton.toml in the root of your project.")
-		os.Exit(1)
+		os.Exit(0)
 	}
 
 	return conf
@@ -125,7 +125,7 @@ func resolveAndAssertDBName(conf *config.Config, cmd *cobra.Command, args []stri
 		databaseName = conf.GetSingularDatabase()
 		if databaseName == "" {
 			fmt.Println("This project is configured with multiple databases. Please specify one.")
-			os.Exit(1)
+			os.Exit(0)
 		}
 	}
 	return databaseName
@@ -145,7 +145,7 @@ func resolveAndAssertDBNameAndMigration(conf *config.Config, cmd *cobra.Command,
 		databaseName = conf.GetSingularDatabase()
 		if databaseName == "" {
 			fmt.Println("This project is configured with multiple databases. Please specify one.")
-			os.Exit(1)
+			os.Exit(0)
 		}
 	}
 	return databaseName, migrationName
