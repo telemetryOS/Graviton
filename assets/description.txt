@@ -1,0 +1,10 @@
+Graviton is a simple an easy to use migration tool. It allows you to define
+migrations in a migrations folder then run them against your database.
+
+It goes beyond a single database and allows you to define multiple
+connections. With each connection you can specify a migrations folder.
+
+Even though Graviton is written in go, migrations are written in TypeScript.
+This means you don't need to compile your migrations or the tool itself. All
+that is needed is the Graviton configuration for your project, one or more
+migrations folders, and the Graviton binary.

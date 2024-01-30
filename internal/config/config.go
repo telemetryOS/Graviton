@@ -65,6 +65,9 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if configPath == "" {
+		return nil, nil
+	}
 
 	configFile, err := os.OpenFile(configPath, os.O_RDONLY, 0644)
 	if err != nil {
@@ -97,6 +100,13 @@ func Load() (*Config, error) {
 	config.ProjectPath = filepath.Dir(configPath)
 
 	return &config, nil
+}
+
+func (c *Config) GetSingularDatabase() string {
+	if len(c.Databases) == 1 {
+		return c.Databases[0].Name
+	}
+	return ""
 }
 
 func (c *Config) Database(name string) *DatabaseConfig {

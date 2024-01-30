@@ -2,37 +2,46 @@ package commands
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/telemetrytv/graviton-cli/internal/config"
 	"github.com/telemetrytv/graviton-cli/internal/driver"
 	"github.com/telemetrytv/graviton-cli/internal/migrations"
 	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
 
 var setHeadCmd = &cobra.Command{
-	Use:   "set-head <migration>",
+	Use:   "set-head [database] <migration>",
 	Short: "sets the head migration",
 	Long:  "Allows setting which migrations have been applied without running them by selecting a new head",
+	Args:  cobra.RangeArgs(1, 2),
+
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		conf := assertConfig()
+		singularDatabase := conf.GetSingularDatabase()
+		switch len(args) {
+		case 0:
+			if singularDatabase != "" {
+				migrationNames := allMigrationNamesWithPrefix(conf, singularDatabase, toComplete)
+				return append(migrationNames, "-"), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
+			}
+			databaseNames := databaseNamesWithPrefix(conf, toComplete)
+			return databaseNames, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
+		case 1:
+			if singularDatabase == "" {
+				migrationNames := allMigrationNamesWithPrefix(conf, args[0], toComplete)
+				return append(migrationNames, "-"), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
+			}
+		}
+		return []string{}, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
+	},
+
 	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) < 1 {
-			fmt.Println("missing migration argument")
-			os.Exit(1)
-		}
-		migrationName := args[0]
-
-		ctx := context.TODO()
-
-		conf, err := config.Load()
-		if err != nil {
-			panic(err)
-		}
-
-		databaseName := TargetDatabaseName(conf)
+		conf := assertConfig()
+		databaseName, migrationName := resolveAndAssertDBNameAndMigration(conf, cmd, args)
 		databaseConf := conf.Database(databaseName)
+
+		ctx := context.Background()
 
 		drv := driver.FromDatabaseConfig(databaseConf)
 		if err := drv.Connect(ctx); err != nil {

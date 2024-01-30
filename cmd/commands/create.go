@@ -4,40 +4,40 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/telemetrytv/graviton-cli/internal/config"
 	"github.com/telemetrytv/graviton-cli/internal/driver/mongodb"
 	"github.com/telemetrytv/graviton-cli/internal/migrations"
 )
 
 var createCmd = &cobra.Command{
-	Use:   "create <name>",
+	Use:   "create [database] <name>",
 	Short: "creates a new migration",
 	Long:  "Creates a new migration with the specified name.",
+	Args:  cobra.RangeArgs(1, 2),
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 0 {
+			conf := assertConfig()
+			databaseNames := []string{}
+			for _, database := range conf.Databases {
+				if strings.HasPrefix(database.Name, toComplete) {
+					databaseNames = append(databaseNames, database.Name)
+				}
+			}
+			return databaseNames, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
+		}
+		return []string{}, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
+	},
 	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) < 1 {
-			fmt.Println("expected migration name")
-			os.Exit(1)
-		}
-		name := args[0]
-
-		conf, err := config.Load()
-		if err != nil {
-			panic(err)
-		}
-		if conf == nil {
-			fmt.Println("No configuration found. Create a graviton.toml in the root of your project.")
-			os.Exit(1)
-		}
-
-		databaseName := TargetDatabaseName(conf)
+		conf := assertConfig()
+		databaseName, migrationName := resolveAndAssertDBNameAndMigration(conf, cmd, args)
 		databaseConf := conf.Database(databaseName)
 
 		now := time.Now()
 		timestamp := now.Format("20060102150405")
-		filename := fmt.Sprintf("%s-%s.migration.ts", timestamp, name)
+		filename := fmt.Sprintf("%s-%s.migration.ts", timestamp, migrationName)
 		migrationPath := filepath.Join(conf.ProjectPath, databaseConf.MigrationsPath, filename)
 
 		if _, err := os.Stat(migrationPath); err != nil {
