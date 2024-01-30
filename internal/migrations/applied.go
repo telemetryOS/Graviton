@@ -22,7 +22,7 @@ func GetApplied(ctx context.Context, d driver.Driver) ([]*Migration, error) {
 			MigrationMetadata: appliedMigrationMetadata,
 			Script: NewScript(
 				ctx,
-				d.Globals(ctx),
+				d,
 				d.Handle(ctx),
 				appliedMigrationMetadata.Source,
 				appliedMigrationMetadata.Filename,
@@ -60,8 +60,7 @@ func GetAppliedWithDownFuncFromDisk(ctx context.Context, projectPath string, con
 
 		script, err := CompileScriptFromFile(
 			ctx,
-			d.Globals(ctx),
-			d.Handle(ctx),
+			d,
 			appliedMigrationMetadata.Filename,
 			migrationPath,
 		)

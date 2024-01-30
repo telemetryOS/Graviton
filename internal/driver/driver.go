@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dop251/goja"
 	"github.com/telemetrytv/graviton-cli/internal/config"
 	"github.com/telemetrytv/graviton-cli/internal/driver/mongodb"
 	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
@@ -18,6 +19,7 @@ type Driver interface {
 	WithTransaction(ctx context.Context, fn func() error) error
 	Handle(ctx context.Context) any
 	Globals(ctx context.Context) map[string]any
+	MaybeFromJSValue(ctx context.Context, runtime *goja.Runtime, value goja.Value) (any, bool)
 }
 
 func FromDatabaseConfig(conf *config.DatabaseConfig) Driver {

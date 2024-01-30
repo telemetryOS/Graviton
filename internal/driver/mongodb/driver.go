@@ -3,6 +3,7 @@ package mongodb
 import (
 	"context"
 
+	"github.com/dop251/goja"
 	"github.com/telemetrytv/graviton-cli/internal/config"
 	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 	"go.mongodb.org/mongo-driver/bson"
@@ -55,8 +56,15 @@ func (d *Driver) Handle(ctx context.Context) any {
 
 func (d *Driver) Globals(ctx context.Context) map[string]any {
 	globals := map[string]any{}
-	globals["ObjectId"] = ObjectId
+	globals["ObjectId"] = JSObjectIdCtor
 	return globals
+}
+
+func (d *Driver) MaybeFromJSValue(ctx context.Context, jsvm *goja.Runtime, val goja.Value) (any, bool) {
+	if IsObjectId(jsvm, val) {
+		return ObjectIdFromJSValue(jsvm, val), true
+	}
+	return nil, false
 }
 
 func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*migrationsmeta.MigrationMetadata, error) {

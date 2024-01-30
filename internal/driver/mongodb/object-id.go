@@ -2,10 +2,11 @@ package mongodb
 
 import (
 	"github.com/dop251/goja"
+	"github.com/telemetrytv/graviton-cli/internal/migrations/js"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-func ObjectId(call goja.ConstructorCall, jsvm *goja.Runtime) *goja.Object {
+func JSObjectIdCtor(call goja.ConstructorCall, jsvm *goja.Runtime) *goja.Object {
 	var objectId primitive.ObjectID
 
 	if len(call.Arguments) > 0 {
@@ -28,4 +29,25 @@ func ObjectId(call goja.ConstructorCall, jsvm *goja.Runtime) *goja.Object {
 	})
 
 	return nil
+}
+
+func IsObjectId(jsvm *goja.Runtime, val goja.Value) bool {
+	return js.IsObjectFromConstructorWithGlobalName(jsvm, val, "ObjectId")
+}
+
+func ObjectIdFromJSValue(jsvm *goja.Runtime, val goja.Value) primitive.ObjectID {
+	toHexStringVal := val.ToObject(jsvm).Get("toHexString")
+	toHexString, ok := goja.AssertFunction(toHexStringVal)
+	if !ok {
+		panic("ObjectId.toHexString is not a function")
+	}
+	returnVal, err := toHexString(goja.Undefined(), nil)
+	if err != nil {
+		panic(err)
+	}
+	goObjectId, err := primitive.ObjectIDFromHex(returnVal.String())
+	if err != nil {
+		panic(err)
+	}
+	return goObjectId
 }

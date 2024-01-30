@@ -4,16 +4,18 @@ package migrations
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
 	"unicode"
 
+	_ "embed"
+
 	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/telemetrytv/graviton-cli/internal/driver"
+	"github.com/telemetrytv/graviton-cli/internal/migrations/js"
 )
 
 const CACHE_PATH = ".graviton/cache"
@@ -25,20 +27,20 @@ var dummyJsCtorWithRuntime = func(call goja.ConstructorCall, jsvm *goja.Runtime)
 
 type Script struct {
 	ctx     context.Context
-	globals map[string]any
+	driver  driver.Driver
 	handle  any
 	src     string
 	origin  string
 	runtime *goja.Runtime
 }
 
-func NewScript(ctx context.Context, globals map[string]any, handle any, src, origin string) *Script {
+func NewScript(ctx context.Context, driver driver.Driver, handle any, src, origin string) *Script {
 	script := &Script{
-		ctx:     ctx,
-		globals: globals,
-		handle:  handle,
-		src:     src,
-		origin:  origin,
+		ctx:    ctx,
+		driver: driver,
+		handle: handle,
+		src:    src,
+		origin: origin,
 	}
 
 	script.Evaluate()
@@ -62,7 +64,7 @@ func (s *BuildScriptError) Print() {
 	}
 }
 
-func CompileScriptFromFile(ctx context.Context, globals map[string]any, handle any, origin, path string) (*Script, error) {
+func CompileScriptFromFile(ctx context.Context, driver driver.Driver, origin, path string) (*Script, error) {
 	result := api.Build(api.BuildOptions{
 		EntryPoints: []string{path},
 		Bundle:      true,
@@ -77,11 +79,11 @@ func CompileScriptFromFile(ctx context.Context, globals map[string]any, handle a
 	}
 
 	script := &Script{
-		ctx:     ctx,
-		globals: globals,
-		handle:  handle,
-		src:     string(result.OutputFiles[0].Contents),
-		origin:  origin,
+		ctx:    ctx,
+		driver: driver,
+		handle: driver.Handle(ctx),
+		src:    string(result.OutputFiles[0].Contents),
+		origin: origin,
 	}
 	script.Evaluate()
 
@@ -101,31 +103,15 @@ func (s *Script) Down() error {
 func (s *Script) Evaluate() {
 	s.runtime = goja.New()
 	s.runtime.Set("console", JSConsole(s.runtime))
-	s.runtime.Set("__g__", IntoJS(s.runtime, s.handle))
-	for name, value := range s.globals {
-		s.runtime.Set(name, IntoJS(s.runtime, value))
+	s.runtime.Set("__g__", s.intoJs(reflect.ValueOf(s.handle)))
+	for name, value := range s.driver.Globals(s.ctx) {
+		s.runtime.Set(name, s.intoJs(reflect.ValueOf(value)))
 	}
 
 	s.runtime.RunScript(s.origin, s.src)
 }
 
-func JSConsole(jsvm *goja.Runtime) *goja.Object {
-	console := jsvm.NewObject()
-	console.Set("log", func(call goja.FunctionCall) goja.Value {
-		fmt.Println(call.Arguments)
-		return goja.Undefined()
-	})
-	return console
-}
-
-// IntoJS converts a go value into a goja value. Note that goja has it's own
-// method for doing this, but it doesn't copy the value, nor does it rename
-// properties to follow JS conventions.
-func IntoJS(jsvm *goja.Runtime, v any) goja.Value {
-	return intoJs(jsvm, reflect.ValueOf(v))
-}
-
-func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
+func (s *Script) intoJs(vr reflect.Value) goja.Value {
 	switch vr.Kind() {
 	case reflect.Bool,
 		reflect.String,
@@ -141,33 +127,33 @@ func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
 		reflect.Int64,
 		reflect.Float32,
 		reflect.Float64:
-		return jsvm.ToValue(vr.Interface())
+		return s.runtime.ToValue(vr.Interface())
 	case reflect.Slice:
-		arr := jsvm.NewArray()
+		arr := s.runtime.NewArray()
 		for i := 0; i < vr.Len(); i += 1 {
-			arr.Set(strconv.Itoa(i), intoJs(jsvm, vr.Index(i)))
+			arr.Set(strconv.Itoa(i), s.intoJs(vr.Index(i)))
 		}
 		return arr
 	case reflect.Map:
-		obj := jsvm.NewObject()
+		obj := s.runtime.NewObject()
 		for _, key := range vr.MapKeys() {
-			obj.Set(key.String(), intoJs(jsvm, vr.MapIndex(key)))
+			obj.Set(key.String(), s.intoJs(vr.MapIndex(key)))
 		}
 		return obj
 	case reflect.Struct:
-		obj := jsvm.NewObject()
+		obj := s.runtime.NewObject()
 		for i := 0; i < vr.NumField(); i += 1 {
 			field := vr.Type().Field(i)
 			if unicode.IsUpper(rune(field.Name[0])) {
 				jsName := strings.ToLower(field.Name[0:1]) + field.Name[1:]
-				obj.Set(jsName, intoJs(jsvm, vr.Field(i)))
+				obj.Set(jsName, s.intoJs(vr.Field(i)))
 			}
 		}
 		for i := 0; i < vr.NumMethod(); i += 1 {
 			method := vr.Type().Method(i)
 			if unicode.IsUpper(rune(method.Name[0])) {
 				jsName := strings.ToLower(method.Name[0:1]) + method.Name[1:]
-				obj.Set(jsName, intoJs(jsvm, vr.Method(i)))
+				obj.Set(jsName, s.intoJs(vr.Method(i)))
 			}
 		}
 		if vr.CanAddr() {
@@ -176,7 +162,7 @@ func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
 				method := vrAddr.Type().Method(i)
 				if unicode.IsUpper(rune(method.Name[0])) {
 					jsName := strings.ToLower(method.Name[0:1]) + method.Name[1:]
-					obj.Set(jsName, intoJs(jsvm, vrAddr.Method(i)))
+					obj.Set(jsName, s.intoJs(vrAddr.Method(i)))
 				}
 			}
 		}
@@ -189,35 +175,35 @@ func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
 			tr.ConvertibleTo(reflect.TypeOf(dummyJsFn)),
 			tr.ConvertibleTo(reflect.TypeOf(dummyJsCtorWithRuntime)),
 			tr.ConvertibleTo(reflect.TypeOf(dummyJsFnWithRuntime)):
-			return jsvm.ToValue(vr.Interface())
+			return s.runtime.ToValue(vr.Interface())
 
 		default:
-			return jsvm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return s.runtime.ToValue(func(call goja.FunctionCall) goja.Value {
 				argsVrs := []reflect.Value{}
 				for _, arg := range call.Arguments {
-					argsVrs = append(argsVrs, reflect.ValueOf(fromJs(jsvm, arg)))
+					argsVrs = append(argsVrs, reflect.ValueOf(s.fromJs(arg)))
 				}
 				rtnVrs := vr.Call(argsVrs)
 				switch len(rtnVrs) {
 				case 0:
 					return goja.Undefined()
 				case 1:
-					return intoJs(jsvm, rtnVrs[0])
+					return s.intoJs(rtnVrs[0])
 				default:
-					arr := jsvm.NewArray()
+					arr := s.runtime.NewArray()
 					for i := 0; i < len(rtnVrs); i += 1 {
-						arr.Set(strconv.Itoa(i), intoJs(jsvm, rtnVrs[i]))
+						arr.Set(strconv.Itoa(i), s.intoJs(rtnVrs[i]))
 					}
 					return arr
 				}
 			})
 		}
 	case reflect.Ptr, reflect.Interface:
-		return intoJs(jsvm, vr.Elem())
+		return s.intoJs(vr.Elem())
 	case reflect.Array:
-		arr := jsvm.NewArray()
+		arr := s.runtime.NewArray()
 		for i := 0; i < vr.Len(); i += 1 {
-			arr.Set(strconv.Itoa(i), intoJs(jsvm, vr.Index(i)))
+			arr.Set(strconv.Itoa(i), s.intoJs(vr.Index(i)))
 		}
 		return arr
 	default:
@@ -226,71 +212,37 @@ func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
 	}
 }
 
-func fromJs(jsvm *goja.Runtime, val goja.Value) any {
+func (s *Script) fromJs(val goja.Value) any {
 	switch {
-	case isObjectFromConstructorWithGlobalName(jsvm, val, "Array"):
-		arr := val.ToObject(jsvm)
+	case js.IsObjectFromConstructorWithGlobalName(s.runtime, val, "Array"):
+		arr := val.ToObject(s.runtime)
 		arrLen := int(arr.Get("length").ToInteger())
 		goVal := []any{}
 		for i := 0; i < arrLen; i += 1 {
-			goVal = append(goVal, fromJs(jsvm, arr.Get(strconv.Itoa(i))))
+			goVal = append(goVal, s.fromJs(arr.Get(strconv.Itoa(i))))
 		}
 		return goVal
-	case isObjectFromConstructorWithGlobalName(jsvm, val, "Object"):
-		obj := val.ToObject(jsvm)
+	case js.IsObjectFromConstructorWithGlobalName(s.runtime, val, "Object"):
+		obj := val.ToObject(s.runtime)
 		goVal := map[string]any{}
 		for _, key := range obj.Keys() {
-			goVal[key] = fromJs(jsvm, obj.Get(key))
+			goVal[key] = s.fromJs(obj.Get(key))
 		}
 		return goVal
-	case isObjectFromConstructorWithGlobalName(jsvm, val, "ObjectId"):
-		toHexStringVal := val.ToObject(jsvm).Get("toHexString")
-		toHexString, ok := goja.AssertFunction(toHexStringVal)
-		if !ok {
-			panic("ObjectId.toHexString is not a function")
-		}
-		returnVal, err := toHexString(goja.Undefined(), nil)
-		if err != nil {
-			panic(err)
-		}
-		goObjectId, err := primitive.ObjectIDFromHex(returnVal.String())
-		if err != nil {
-			panic(err)
-		}
-		return goObjectId
 	default:
+		goVal, ok := s.driver.MaybeFromJSValue(s.ctx, s.runtime, val)
+		if ok {
+			return goVal
+		}
 		return val.Export()
 	}
 }
 
-func isObjectFromConstructorWithGlobalName(jsvm *goja.Runtime, val goja.Value, name string) bool {
-	ObjCtorVal := getObjectConstructor(jsvm, val)
-	if ObjCtorVal == nil {
-		return false
-	}
-	targetCtorVal := jsvm.GlobalObject().Get(name)
-	if targetCtorVal == nil {
-		return false
-	}
-	return ObjCtorVal.StrictEquals(targetCtorVal)
-}
-
-func getObjectConstructor(jsvm *goja.Runtime, val goja.Value) goja.Value {
-	obj := val.ToObject(jsvm)
-	if obj == nil {
-		return nil
-	}
-	protoObjVal := obj.Prototype()
-	if protoObjVal == nil {
-		return nil
-	}
-	protoObj := protoObjVal.ToObject(jsvm)
-	if protoObj == nil {
-		return nil
-	}
-	protoObjCtorVal := protoObj.Get("constructor")
-	if protoObjCtorVal == nil {
-		return nil
-	}
-	return protoObjCtorVal
+func JSConsole(jsvm *goja.Runtime) *goja.Object {
+	console := jsvm.NewObject()
+	console.Set("log", func(call goja.FunctionCall) goja.Value {
+		fmt.Println(call.Arguments)
+		return goja.Undefined()
+	})
+	return console
 }
