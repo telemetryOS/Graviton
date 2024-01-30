@@ -20,3 +20,14 @@ type Collection = {
 type Handle = {
   collection: (name: string) => Collection;
 }
+
+type Console = {
+  log(...args: any[]): void;
+}
+declare const console: Console;
+
+declare class ObjectId {
+  constructor(hexValue: string);
+  toHexString(): string;
+  toString(): string;
+}

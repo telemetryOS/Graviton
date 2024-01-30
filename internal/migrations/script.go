@@ -13,6 +13,7 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 const CACHE_PATH = ".graviton/cache"
@@ -61,7 +62,7 @@ func (s *BuildScriptError) Print() {
 	}
 }
 
-func CompileScriptFromFile(ctx context.Context, handle any, origin, path string) (*Script, error) {
+func CompileScriptFromFile(ctx context.Context, globals map[string]any, handle any, origin, path string) (*Script, error) {
 	result := api.Build(api.BuildOptions{
 		EntryPoints: []string{path},
 		Bundle:      true,
@@ -76,10 +77,11 @@ func CompileScriptFromFile(ctx context.Context, handle any, origin, path string)
 	}
 
 	script := &Script{
-		ctx:    ctx,
-		handle: handle,
-		src:    string(result.OutputFiles[0].Contents),
-		origin: origin,
+		ctx:     ctx,
+		globals: globals,
+		handle:  handle,
+		src:     string(result.OutputFiles[0].Contents),
+		origin:  origin,
 	}
 	script.Evaluate()
 
@@ -187,7 +189,7 @@ func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
 			tr.ConvertibleTo(reflect.TypeOf(dummyJsFn)),
 			tr.ConvertibleTo(reflect.TypeOf(dummyJsCtorWithRuntime)),
 			tr.ConvertibleTo(reflect.TypeOf(dummyJsFnWithRuntime)):
-			return jsvm.ToValue(vr)
+			return jsvm.ToValue(vr.Interface())
 
 		default:
 			return jsvm.ToValue(func(call goja.FunctionCall) goja.Value {
@@ -226,11 +228,69 @@ func intoJs(jsvm *goja.Runtime, vr reflect.Value) goja.Value {
 
 func fromJs(jsvm *goja.Runtime, val goja.Value) any {
 	switch {
-	// FIXME: We need to convert things like objects and special goja types
-	// to a reasonable go type
-	// case val.ToObject(jsvm)
-	// case val.ExportType().AssignableTo()
+	case isObjectFromConstructorWithGlobalName(jsvm, val, "Array"):
+		arr := val.ToObject(jsvm)
+		arrLen := int(arr.Get("length").ToInteger())
+		goVal := []any{}
+		for i := 0; i < arrLen; i += 1 {
+			goVal = append(goVal, fromJs(jsvm, arr.Get(strconv.Itoa(i))))
+		}
+		return goVal
+	case isObjectFromConstructorWithGlobalName(jsvm, val, "Object"):
+		obj := val.ToObject(jsvm)
+		goVal := map[string]any{}
+		for _, key := range obj.Keys() {
+			goVal[key] = fromJs(jsvm, obj.Get(key))
+		}
+		return goVal
+	case isObjectFromConstructorWithGlobalName(jsvm, val, "ObjectId"):
+		toHexStringVal := val.ToObject(jsvm).Get("toHexString")
+		toHexString, ok := goja.AssertFunction(toHexStringVal)
+		if !ok {
+			panic("ObjectId.toHexString is not a function")
+		}
+		returnVal, err := toHexString(goja.Undefined(), nil)
+		if err != nil {
+			panic(err)
+		}
+		goObjectId, err := primitive.ObjectIDFromHex(returnVal.String())
+		if err != nil {
+			panic(err)
+		}
+		return goObjectId
 	default:
 		return val.Export()
 	}
+}
+
+func isObjectFromConstructorWithGlobalName(jsvm *goja.Runtime, val goja.Value, name string) bool {
+	ObjCtorVal := getObjectConstructor(jsvm, val)
+	if ObjCtorVal == nil {
+		return false
+	}
+	targetCtorVal := jsvm.GlobalObject().Get(name)
+	if targetCtorVal == nil {
+		return false
+	}
+	return ObjCtorVal.StrictEquals(targetCtorVal)
+}
+
+func getObjectConstructor(jsvm *goja.Runtime, val goja.Value) goja.Value {
+	obj := val.ToObject(jsvm)
+	if obj == nil {
+		return nil
+	}
+	protoObjVal := obj.Prototype()
+	if protoObjVal == nil {
+		return nil
+	}
+	protoObj := protoObjVal.ToObject(jsvm)
+	if protoObj == nil {
+		return nil
+	}
+	protoObjCtorVal := protoObj.Get("constructor")
+	if protoObjCtorVal == nil {
+		return nil
+	}
+	return protoObjCtorVal
 }

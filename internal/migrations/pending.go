@@ -38,7 +38,7 @@ func GetPending(ctx context.Context, projectPath string, conf *config.DatabaseCo
 		}
 
 		migrationPath := filepath.Join(migrationsPath, migrationFilename)
-		script, err := CompileScriptFromFile(ctx, d.Handle(ctx), migrationFilename, migrationPath)
+		script, err := CompileScriptFromFile(ctx, d.Globals(ctx), d.Handle(ctx), migrationFilename, migrationPath)
 		if err != nil {
 			return nil, err
 		}

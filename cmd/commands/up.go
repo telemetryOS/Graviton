@@ -91,9 +91,11 @@ var upCmd = &cobra.Command{
 
 			err = drv.WithTransaction(ctx, func() error {
 				for _, pendingMigration := range pendingMigrations {
+
 					if err := pendingMigration.Script.Up(); err != nil {
 						panic(err)
 					}
+
 					pendingMigration.AppliedAt = time.Now()
 				}
 

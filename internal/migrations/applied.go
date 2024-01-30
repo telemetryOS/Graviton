@@ -60,6 +60,7 @@ func GetAppliedWithDownFuncFromDisk(ctx context.Context, projectPath string, con
 
 		script, err := CompileScriptFromFile(
 			ctx,
+			d.Globals(ctx),
 			d.Handle(ctx),
 			appliedMigrationMetadata.Filename,
 			migrationPath,

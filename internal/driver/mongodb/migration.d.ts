@@ -6,12 +6,6 @@ type InsertOneResult = {
   insertedID: string;
 }
 
-type ObjectId = {
-  new(hexValue: string): ObjectId;
-  toHexString(): string;
-  toString(): string;
-}
-
 type Collection = {
   insertMany(docs: Record<string, any>[]): InsertManyResult;
   insertOne(docs: Record<string, any>): InsertOneResult;
@@ -25,4 +19,15 @@ type Collection = {
 
 type Handle = {
   collection: (name: string) => Collection;
+}
+
+type Console = {
+  log(...args: any[]): void;
+}
+declare const console: Console;
+
+declare class ObjectId {
+  constructor(hexValue: string);
+  toHexString(): string;
+  toString(): string;
 }
