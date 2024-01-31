@@ -1,6 +1,8 @@
 # Graviton
 
-![Graviton Graphic](graviton.png)
+<p>
+  <img align="right" src="graviton.png" width="400" />
+</p>
 
 > The creator of light - forged in the limitless void
 
