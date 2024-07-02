@@ -9,10 +9,6 @@ import (
 )
 
 func main() {
-	if !(runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
-		fmt.Println("Graviton only supports amd64 architecture")
-		return
-	}
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		fmt.Println("Graviton only supports linux and macOS operating systems")
 		return
