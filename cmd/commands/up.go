@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/spf13/cobra"
 	"github.com/telemetrytv/graviton-cli/internal/driver"
 	"github.com/telemetrytv/graviton-cli/internal/migrations"
@@ -107,8 +106,6 @@ var upCmd = &cobra.Command{
 			for _, pendingMigration := range applyMigrations {
 				newlyAppliedMigrationsMetadata = append(newlyAppliedMigrationsMetadata, pendingMigration.MigrationMetadata)
 			}
-
-			spew.Dump(newlyAppliedMigrationsMetadata)
 
 			if err := drv.SetAppliedMigrationsMetadata(ctx, newlyAppliedMigrationsMetadata); err != nil {
 				panic(err)

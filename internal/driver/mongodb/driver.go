@@ -2,6 +2,8 @@ package mongodb
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/dop251/goja"
 	"github.com/telemetrytv/graviton-cli/internal/config"
@@ -39,6 +41,36 @@ func (d *Driver) Connect(ctx context.Context) error {
 
 	d.client = client
 	d.database = client.Database(d.config.DatabaseName)
+
+	var buildInfo struct {
+		Version string `bson:"version"`
+	}
+	result := d.database.RunCommand(ctx, bson.D{{Key: "buildInfo", Value: 1}})
+	if err := result.Decode(&buildInfo); err != nil {
+		return fmt.Errorf("failed to get MongoDB server version: %w", err)
+	}
+	if buildInfo.Version < "4.0" {
+		return errors.New("MongoDB version must be at least 4.0")
+	}
+
+	var helloDB struct {
+		IsWritable bool `bson:"isWritable"`
+		Secondary  bool `bson:"secondary"`
+		HasReplica bool `bson:"hasReplica"`
+	}
+	result = d.database.RunCommand(ctx, bson.D{{Key: "hello", Value: 1}})
+	if err := result.Decode(&helloDB); err != nil {
+		return fmt.Errorf("failed to get MongoDB server metadata: %w", err)
+	}
+	if !helloDB.IsWritable {
+		return errors.New("MongoDB server is not writable")
+	}
+	if helloDB.Secondary {
+		return errors.New("Graviton cannot write to a secondary MongoDB server")
+	}
+	if !helloDB.HasReplica {
+		return errors.New("MongoDB server must be part of a replica set as transactions are required for Graviton")
+	}
 
 	return nil
 }
@@ -92,18 +124,21 @@ func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMet
 	}
 	defer session.EndSession(ctx)
 
-	session.WithTransaction(ctx, func(ctx mongo.SessionContext) (any, error) {
+	_, err = session.WithTransaction(ctx, func(ctx mongo.SessionContext) (any, error) {
 		migrationsCollection := d.getMigrationsCollection()
 		migrationsCollection.DeleteMany(ctx, bson.M{})
 		var documents []any
 		for _, migrationMetadata := range migrationsMetadata {
 			documents = append(documents, migrationMetadata)
 		}
-		migrationsCollection.InsertMany(ctx, documents)
+		_, err := migrationsCollection.InsertMany(ctx, documents)
+		if err != nil {
+			return nil, err
+		}
 		return nil, nil
 	})
 
-	return nil
+	return err
 }
 
 func (d *Driver) WithTransaction(ctx context.Context, fn func() error) error {
