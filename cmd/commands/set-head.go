@@ -49,7 +49,9 @@ var setHeadCmd = &cobra.Command{
 		}
 
 		if migrationName == "-" {
-			drv.SetAppliedMigrationsMetadata(ctx, []*migrationsmeta.MigrationMetadata{})
+			if err := drv.SetAppliedMigrationsMetadata(ctx, []*migrationsmeta.MigrationMetadata{}); err != nil {
+				panic(err)
+			}
 			return
 		}
 
@@ -77,7 +79,9 @@ var setHeadCmd = &cobra.Command{
 			}
 		}
 
-		drv.SetAppliedMigrationsMetadata(ctx, migrationsMetadata)
+		if err := drv.SetAppliedMigrationsMetadata(ctx, migrationsMetadata); err != nil {
+			panic(err)
+		}
 	},
 }
 
