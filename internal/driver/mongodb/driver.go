@@ -54,21 +54,22 @@ func (d *Driver) Connect(ctx context.Context) error {
 	}
 
 	var helloDB struct {
-		IsWritable bool `bson:"isWritable"`
-		Secondary  bool `bson:"secondary"`
-		HasReplica bool `bson:"hasReplica"`
+		IsWritablePrimary bool `bson:"isWritablePrimary"`
+		IsWritable        bool `bson:"isWritable"`
+		Secondary         bool `bson:"secondary"`
+		HasReplica        bool `bson:"hasReplica"`
 	}
 	result = d.database.RunCommand(ctx, bson.D{{Key: "hello", Value: 1}})
 	if err := result.Decode(&helloDB); err != nil {
 		return fmt.Errorf("failed to get MongoDB server metadata: %w", err)
 	}
-	if !helloDB.IsWritable {
+	if !helloDB.IsWritable && !helloDB.IsWritablePrimary {
 		return errors.New("MongoDB server is not writable")
 	}
 	if helloDB.Secondary {
 		return errors.New("Graviton cannot write to a secondary MongoDB server")
 	}
-	if !helloDB.HasReplica {
+	if !helloDB.HasReplica && !helloDB.IsWritablePrimary {
 		return errors.New("MongoDB server must be part of a replica set as transactions are required for Graviton")
 	}
 
