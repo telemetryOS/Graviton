@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/telemetrytv/graviton-cli/internal/config"
-	"github.com/telemetrytv/graviton-cli/internal/driver"
+	"graviton/internal/config"
+	"graviton/internal/driver"
 )
 
 func GetApplied(ctx context.Context, d driver.Driver) ([]*Migration, error) {

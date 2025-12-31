@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"os"
 
+	"graviton/internal/config"
+	"graviton/internal/driver/mongodb"
+	migrationsmeta "graviton/internal/migrations-meta"
+
 	"github.com/dop251/goja"
-	"github.com/telemetrytv/graviton-cli/internal/config"
-	"github.com/telemetrytv/graviton-cli/internal/driver/mongodb"
-	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
 
 type Driver interface {

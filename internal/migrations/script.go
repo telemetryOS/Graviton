@@ -12,10 +12,11 @@ import (
 
 	_ "embed"
 
+	"graviton/internal/driver"
+	"graviton/internal/migrations/js"
+
 	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"
-	"github.com/telemetrytv/graviton-cli/internal/driver"
-	"github.com/telemetrytv/graviton-cli/internal/migrations/js"
 )
 
 const CACHE_PATH = ".graviton/cache"

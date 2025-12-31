@@ -5,7 +5,7 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/telemetrytv/graviton-cli/cmd/commands"
+	"graviton/cmd/commands"
 )
 
 func main() {

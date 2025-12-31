@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"graviton/internal/driver"
+	"graviton/internal/migrations"
+
 	"github.com/spf13/cobra"
-	"github.com/telemetrytv/graviton-cli/internal/driver"
-	"github.com/telemetrytv/graviton-cli/internal/migrations"
 )
 
 var statusCmd = &cobra.Command{

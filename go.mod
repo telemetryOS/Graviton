@@ -1,4 +1,4 @@
-module github.com/telemetrytv/graviton-cli
+module graviton
 
 go 1.21.3
 

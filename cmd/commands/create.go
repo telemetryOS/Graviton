@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"graviton/internal/driver/mongodb"
+	"graviton/internal/migrations"
+
 	"github.com/spf13/cobra"
-	"github.com/telemetrytv/graviton-cli/internal/driver/mongodb"
-	"github.com/telemetrytv/graviton-cli/internal/migrations"
 )
 
 var createCmd = &cobra.Command{

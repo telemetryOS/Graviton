@@ -4,10 +4,11 @@ import (
 	"context"
 	"time"
 
+	"graviton/internal/driver"
+	"graviton/internal/migrations"
+	migrationsmeta "graviton/internal/migrations-meta"
+
 	"github.com/spf13/cobra"
-	"github.com/telemetrytv/graviton-cli/internal/driver"
-	"github.com/telemetrytv/graviton-cli/internal/migrations"
-	migrationsmeta "github.com/telemetrytv/graviton-cli/internal/migrations-meta"
 )
 
 var setHeadCmd = &cobra.Command{

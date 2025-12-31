@@ -1,8 +1,9 @@
 package mongodb
 
 import (
+	"graviton/internal/migrations/js"
+
 	"github.com/dop251/goja"
-	"github.com/telemetrytv/graviton-cli/internal/migrations/js"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
