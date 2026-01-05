@@ -150,14 +150,14 @@ func (d *Driver) WithTransaction(ctx context.Context, fn func() error) error {
 	}
 	defer session.EndSession(ctx)
 
-	session.WithTransaction(ctx, func(ctx mongo.SessionContext) (any, error) {
+	_, err = session.WithTransaction(ctx, func(ctx mongo.SessionContext) (any, error) {
 		if err := fn(); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	})
 
-	return nil
+	return err
 }
 
 func (d *Driver) getMigrationsCollection() *mongo.Collection {
