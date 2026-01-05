@@ -52,6 +52,12 @@ var upCmd = &cobra.Command{
 			panic(err)
 		}
 
+		// Get already-applied migrations first (needed to preserve them when updating metadata)
+		alreadyAppliedMigrations, err := migrations.GetApplied(ctx, drv)
+		if err != nil {
+			panic(err)
+		}
+
 		applyMigrations, err := migrations.GetPending(ctx, conf.ProjectPath, databaseConf, drv)
 		if err != nil {
 			if err, ok := err.(*migrations.BuildScriptError); ok {
@@ -103,12 +109,17 @@ var upCmd = &cobra.Command{
 				applyMigration.AppliedAt = time.Now()
 			}
 
-			var newlyAppliedMigrationsMetadata []*migrationsmeta.MigrationMetadata
-			for _, pendingMigration := range applyMigrations {
-				newlyAppliedMigrationsMetadata = append(newlyAppliedMigrationsMetadata, pendingMigration.MigrationMetadata)
+			// Combine already-applied migrations with newly-applied ones
+			// SetAppliedMigrationsMetadata replaces all records, so we must include both
+			var allAppliedMigrationsMetadata []*migrationsmeta.MigrationMetadata
+			for _, alreadyApplied := range alreadyAppliedMigrations {
+				allAppliedMigrationsMetadata = append(allAppliedMigrationsMetadata, alreadyApplied.MigrationMetadata)
+			}
+			for _, newlyApplied := range applyMigrations {
+				allAppliedMigrationsMetadata = append(allAppliedMigrationsMetadata, newlyApplied.MigrationMetadata)
 			}
 
-			if err := drv.SetAppliedMigrationsMetadata(ctx, newlyAppliedMigrationsMetadata); err != nil {
+			if err := drv.SetAppliedMigrationsMetadata(ctx, allAppliedMigrationsMetadata); err != nil {
 				panic(err)
 			}
 
