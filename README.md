@@ -426,7 +426,7 @@ Clone the repository and build with Go. The resulting binary can be placed anywh
 ```bash
 git clone https://github.com/telemetryos/graviton
 cd graviton
-go build -o graviton ./cmd
+go build -o graviton ./cmd/graviton
 ```
 
 ### Running Tests

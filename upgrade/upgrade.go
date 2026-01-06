@@ -111,7 +111,7 @@ func cloneTag(repoURL, tag, destPath string) error {
 
 func buildBinary(repoPath string) (string, error) {
 	outputPath := filepath.Join(repoPath, "graviton")
-	cmd := exec.Command("go", "build", "-o", outputPath, "./cmd")
+	cmd := exec.Command("go", "build", "-o", outputPath, "./cmd/graviton")
 	cmd.Dir = repoPath
 
 	if err := cmd.Run(); err != nil {
