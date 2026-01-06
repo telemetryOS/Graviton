@@ -259,6 +259,16 @@ graviton create add-users-table
 # Creates: migrations/20240106123045-add-users-table.migration.ts
 ```
 
+### upgrade
+
+The upgrade command downloads and builds the latest version of Graviton from GitHub, replacing the current binary.
+
+```bash
+graviton upgrade
+```
+
+This fetches the latest release tag, clones the repository, builds a new binary, and replaces the current one.
+
 ## TypeScript API Reference
 
 ### MongoDB API
