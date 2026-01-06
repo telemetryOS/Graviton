@@ -42,6 +42,7 @@ var statusCmd = &cobra.Command{
 		if err := drv.Connect(ctx); err != nil {
 			panic(err)
 		}
+		defer drv.Disconnect(ctx)
 
 		pendingMigrations, err := migrations.GetPending(ctx, conf.ProjectPath, databaseConf, drv)
 		if err != nil {

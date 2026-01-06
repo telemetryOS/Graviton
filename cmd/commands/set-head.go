@@ -48,6 +48,7 @@ var setHeadCmd = &cobra.Command{
 		if err := drv.Connect(ctx); err != nil {
 			panic(err)
 		}
+		defer drv.Disconnect(ctx)
 
 		if migrationName == "-" {
 			if err := drv.SetAppliedMigrationsMetadata(ctx, []*migrationsmeta.MigrationMetadata{}); err != nil {

@@ -57,10 +57,13 @@ func databaseNamesWithPrefix(conf *config.Config, prefix string) []string {
 func pendingMigrationNamesWithPrefix(conf *config.Config, databaseName string, prefix string) []string {
 	databaseConf := conf.Database(databaseName)
 	drv := driver.FromDatabaseConfig(databaseConf)
-	if err := drv.Connect(context.Background()); err != nil {
+	ctx := context.Background()
+	if err := drv.Connect(ctx); err != nil {
 		return []string{}
 	}
-	pendingMigrations, err := migrations.GetPending(context.Background(), conf.ProjectPath, databaseConf, drv)
+	defer drv.Disconnect(ctx)
+
+	pendingMigrations, err := migrations.GetPending(ctx, conf.ProjectPath, databaseConf, drv)
 	if err != nil {
 		return []string{}
 	}
@@ -76,10 +79,13 @@ func pendingMigrationNamesWithPrefix(conf *config.Config, databaseName string, p
 func appliedMigrationNamesWithPrefix(conf *config.Config, databaseName string, prefix string) []string {
 	databaseConf := conf.Database(databaseName)
 	drv := driver.FromDatabaseConfig(databaseConf)
-	if err := drv.Connect(context.Background()); err != nil {
+	ctx := context.Background()
+	if err := drv.Connect(ctx); err != nil {
 		return []string{}
 	}
-	pendingMigrations, err := migrations.GetApplied(context.Background(), drv)
+	defer drv.Disconnect(ctx)
+
+	pendingMigrations, err := migrations.GetApplied(ctx, drv)
 	if err != nil {
 		return []string{}
 	}
@@ -95,10 +101,13 @@ func appliedMigrationNamesWithPrefix(conf *config.Config, databaseName string, p
 func appliedMigrationNamesFromDiskWithPrefix(conf *config.Config, databaseName string, prefix string) []string {
 	databaseConf := conf.Database(databaseName)
 	drv := driver.FromDatabaseConfig(databaseConf)
-	if err := drv.Connect(context.Background()); err != nil {
+	ctx := context.Background()
+	if err := drv.Connect(ctx); err != nil {
 		return []string{}
 	}
-	pendingMigrations, err := migrations.GetAppliedWithDownFuncFromDisk(context.Background(), conf.ProjectPath, databaseConf, drv)
+	defer drv.Disconnect(ctx)
+
+	pendingMigrations, err := migrations.GetAppliedWithDownFuncFromDisk(ctx, conf.ProjectPath, databaseConf, drv)
 	if err != nil {
 		return []string{}
 	}

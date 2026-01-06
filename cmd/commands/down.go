@@ -62,6 +62,7 @@ var downCmd = &cobra.Command{
 		if err := drv.Connect(ctx); err != nil {
 			panic(err)
 		}
+		defer drv.Disconnect(ctx)
 
 		var rollbackMigrations []*migrations.Migration
 		var err error
@@ -80,10 +81,6 @@ var downCmd = &cobra.Command{
 			return rollbackMigrations[i].Filename > rollbackMigrations[j].Filename
 		})
 
-		// NOTE: We will keep migration metadata for migrations we will not be
-		// rolling back.
-		appliedMigrationsMetadata := []*migrationsmeta.MigrationMetadata{}
-
 		if migrationName != "-" {
 			targetMigrationIndex := -1
 			for i, appliedMigration := range rollbackMigrations {
@@ -97,11 +94,7 @@ var downCmd = &cobra.Command{
 				return
 			}
 
-			rollbackMigrations = rollbackMigrations[:targetMigrationIndex]
-			remainingMigrations := rollbackMigrations[targetMigrationIndex:]
-			for _, remainingMigration := range remainingMigrations {
-				appliedMigrationsMetadata = append(appliedMigrationsMetadata, remainingMigration.MigrationMetadata)
-			}
+			rollbackMigrations = rollbackMigrations[:targetMigrationIndex+1]
 		}
 
 		fmt.Println("Reverting migrations for database `" + databaseName + "` to `" + migrationName + "`")
@@ -114,23 +107,34 @@ var downCmd = &cobra.Command{
 		}
 		fmt.Println(strings.Join(rollbackMigrationNames, "\n"))
 
-		err = drv.WithTransaction(ctx, func(sessCtx context.Context) error {
-			for _, rollbackMigration := range rollbackMigrations {
+		for _, rollbackMigration := range rollbackMigrations {
+			err = drv.WithTransaction(ctx, func(sessCtx context.Context) error {
 				err := rollbackMigration.Script.Down()
 				if err != nil {
 					return err
 				}
 
-				err = drv.SetAppliedMigrationsMetadata(sessCtx, appliedMigrationsMetadata)
+				currentApplied, err := drv.GetAppliedMigrationsMetadata(sessCtx)
 				if err != nil {
 					return err
 				}
-			}
-			return nil
-		})
 
-		if err != nil {
-			panic(err)
+				var updatedApplied []*migrationsmeta.MigrationMetadata
+				for _, m := range currentApplied {
+					if m.Filename != rollbackMigration.Filename {
+						updatedApplied = append(updatedApplied, m)
+					}
+				}
+
+				if err := drv.SetAppliedMigrationsMetadata(sessCtx, updatedApplied); err != nil {
+					return err
+				}
+
+				return nil
+			})
+			if err != nil {
+				panic(err)
+			}
 		}
 
 		fmt.Println("Reverted migrations for database `" + databaseName + "` to `" + migrationName + "`")

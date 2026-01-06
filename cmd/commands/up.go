@@ -8,7 +8,6 @@ import (
 
 	"graviton/driver"
 	"graviton/migrations"
-	migrationsmeta "graviton/migrations-meta"
 
 	"github.com/spf13/cobra"
 )
@@ -51,6 +50,7 @@ var upCmd = &cobra.Command{
 		if err := drv.Connect(ctx); err != nil {
 			panic(err)
 		}
+		defer drv.Disconnect(ctx)
 
 		applyMigrations, err := migrations.GetPending(ctx, conf.ProjectPath, databaseConf, drv)
 		if err != nil {
@@ -93,29 +93,30 @@ var upCmd = &cobra.Command{
 		}
 		fmt.Println(strings.Join(applyMigrationNames, "\n"))
 
-		err = drv.WithTransaction(ctx, func(sessCtx context.Context) error {
-			for _, applyMigration := range applyMigrations {
-
+		for _, applyMigration := range applyMigrations {
+			err = drv.WithTransaction(ctx, func(sessCtx context.Context) error {
 				if err := applyMigration.Script.Up(); err != nil {
 					return err
 				}
 
 				applyMigration.AppliedAt = time.Now()
-			}
 
-			var newlyAppliedMigrationsMetadata []*migrationsmeta.MigrationMetadata
-			for _, pendingMigration := range applyMigrations {
-				newlyAppliedMigrationsMetadata = append(newlyAppliedMigrationsMetadata, pendingMigration.MigrationMetadata)
-			}
+				previouslyApplied, err := drv.GetAppliedMigrationsMetadata(sessCtx)
+				if err != nil {
+					return err
+				}
 
-			if err := drv.SetAppliedMigrationsMetadata(sessCtx, newlyAppliedMigrationsMetadata); err != nil {
-				return err
-			}
+				allAppliedMigrations := append(previouslyApplied, applyMigration.MigrationMetadata)
 
-			return nil
-		})
-		if err != nil {
-			panic(err)
+				if err := drv.SetAppliedMigrationsMetadata(sessCtx, allAppliedMigrations); err != nil {
+					return err
+				}
+
+				return nil
+			})
+			if err != nil {
+				panic(err)
+			}
 		}
 
 		fmt.Print("Applied migrations for database `" + databaseName)
