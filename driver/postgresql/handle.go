@@ -12,6 +12,7 @@ type Handle struct {
 
 type SQLResult struct {
 	RowsAffected int64
+	LastInsertId int64
 }
 
 func (h *Handle) Exec(sqlQuery *SQLQuery) *SQLResult {
@@ -27,8 +28,11 @@ func (h *Handle) Exec(sqlQuery *SQLQuery) *SQLResult {
 		panic(err)
 	}
 
+	lastInsertId, _ := result.LastInsertId()
+
 	return &SQLResult{
 		RowsAffected: rowsAffected,
+		LastInsertId: lastInsertId,
 	}
 }
 

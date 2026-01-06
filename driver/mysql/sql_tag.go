@@ -20,7 +20,11 @@ func SQLQueryCtor(call goja.ConstructorCall, vm *goja.Runtime) *goja.Object {
 	}
 
 	query := call.Arguments[0].String()
-	params := call.Arguments[1].Export().([]any)
+
+	params, ok := call.Arguments[1].Export().([]any)
+	if !ok {
+		panic(vm.ToValue("SQLQuery constructor: params must be an array"))
+	}
 
 	call.This.Set("query", query)
 	call.This.Set("params", params)

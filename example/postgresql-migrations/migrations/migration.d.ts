@@ -6,6 +6,7 @@ type SQLQuery = {
 
 type SQLResult = {
   rowsAffected: number;
+  lastInsertId: number;
 }
 
 type Handle = {

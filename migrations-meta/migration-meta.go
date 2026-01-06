@@ -16,5 +16,8 @@ type MigrationMetadata struct {
 
 func (m *MigrationMetadata) Name() string {
 	matches := MigrationNamePattern.FindStringSubmatch(m.Filename)
+	if len(matches) < 2 {
+		return ""
+	}
 	return matches[1]
 }

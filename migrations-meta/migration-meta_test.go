@@ -53,13 +53,10 @@ func Test_MigrationMetadata_Name_InvalidFilename(t *testing.T) {
 				AppliedAt: time.Now(),
 			}
 
-			defer func() {
-				if r := recover(); r == nil {
-					t.Errorf("Name() should panic for invalid filename %q, but did not", tt.filename)
-				}
-			}()
-
-			m.Name()
+			result := m.Name()
+			if result != "" {
+				t.Errorf("Name() = %q for invalid filename %q, want empty string", result, tt.filename)
+			}
 		})
 	}
 }

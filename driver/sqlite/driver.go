@@ -35,9 +35,10 @@ type contextKey string
 const txContextKey contextKey = "sqlite_tx"
 
 type Driver struct {
-	config          *config.DatabaseConfig
-	db              *sql.DB
-	sqlQueryCtorVal goja.Value
+	config            *config.DatabaseConfig
+	db                *sql.DB
+	sqlQueryCtorVal   goja.Value
+	sqlTagFunctionVal goja.Value
 }
 
 func New(conf *config.DatabaseConfig) *Driver {
@@ -158,14 +159,18 @@ func (d *Driver) WithTransaction(ctx context.Context, fn func(context.Context) e
 
 	defer func() {
 		if r := recover(); r != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				fmt.Printf("Warning: failed to rollback transaction: %v\n", rbErr)
+			}
 			if e, ok := r.(error); ok {
 				returnErr = e
 			} else {
 				returnErr = fmt.Errorf("panic in transaction: %v", r)
 			}
 		} else if returnErr != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				fmt.Printf("Warning: failed to rollback transaction: %v\n", rbErr)
+			}
 		} else {
 			returnErr = tx.Commit()
 		}
@@ -182,12 +187,13 @@ func (d *Driver) Handle(ctx context.Context) any {
 
 func (d *Driver) Init(ctx context.Context, runtime *goja.Runtime) {
 	d.sqlQueryCtorVal = runtime.ToValue(SQLQueryCtor)
+	d.sqlTagFunctionVal = runtime.ToValue(createSQLTagFunction(d))
 }
 
 func (d *Driver) Globals(ctx context.Context, runtime *goja.Runtime) map[string]any {
 	globals := map[string]any{}
 	globals["SQLQuery"] = d.sqlQueryCtorVal
-	globals["sql"] = runtime.ToValue(createSQLTagFunction(d))
+	globals["sql"] = d.sqlTagFunctionVal
 	return globals
 }
 

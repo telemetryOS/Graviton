@@ -149,14 +149,18 @@ func (d *Driver) WithTransaction(ctx context.Context, fn func(context.Context) e
 
 	defer func() {
 		if r := recover(); r != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				fmt.Printf("Warning: failed to rollback transaction: %v\n", rbErr)
+			}
 			if e, ok := r.(error); ok {
 				returnErr = e
 			} else {
 				returnErr = fmt.Errorf("panic in transaction: %v", r)
 			}
 		} else if returnErr != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				fmt.Printf("Warning: failed to rollback transaction: %v\n", rbErr)
+			}
 		} else {
 			returnErr = tx.Commit()
 		}
