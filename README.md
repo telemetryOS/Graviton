@@ -24,7 +24,7 @@ Additionally, Graviton is compatible with database systems that use the same wir
 ## Installation
 
 ```sh
-go install github.com/telemetryos/graviton/cmd/graviton@latest
+go install github.com/telemetryos/graviton/cmd@latest
 ```
 
 Alternatively, build from source or download a binary from the [releases page](https://github.com/telemetryos/graviton/releases).
