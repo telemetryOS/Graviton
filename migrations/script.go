@@ -105,7 +105,10 @@ func (s *Script) Evaluate() {
 	s.runtime = goja.New()
 	s.runtime.Set("console", JSConsole(s.runtime))
 	s.runtime.Set("__g__", s.intoJs(reflect.ValueOf(s.handle)))
-	for name, value := range s.driver.Globals(s.ctx) {
+
+	s.driver.Init(s.ctx, s.runtime)
+
+	for name, value := range s.driver.Globals(s.ctx, s.runtime) {
 		s.runtime.Set(name, s.intoJs(reflect.ValueOf(value)))
 	}
 
@@ -113,6 +116,16 @@ func (s *Script) Evaluate() {
 }
 
 func (s *Script) intoJs(vr reflect.Value) goja.Value {
+	intf := vr.Interface()
+
+	if gojaVal, ok := intf.(goja.Value); ok {
+		return gojaVal
+	}
+
+	if gojaObj, ok := intf.(*goja.Object); ok {
+		return gojaObj
+	}
+
 	switch vr.Kind() {
 	case reflect.Bool,
 		reflect.String,

@@ -14,7 +14,10 @@ const CONFIG_NAME = "graviton.config.toml"
 type DatabaseKind string
 
 const (
-	DatabaseKindMongoDB DatabaseKind = "mongodb"
+	DatabaseKindMongoDB    DatabaseKind = "mongodb"
+	DatabaseKindPostgreSQL DatabaseKind = "postgresql"
+	DatabaseKindMySQL      DatabaseKind = "mysql"
+	DatabaseKindSQLite     DatabaseKind = "sqlite"
 )
 
 type Config struct {

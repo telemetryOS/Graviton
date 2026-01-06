@@ -1,8 +1,6 @@
 package mongodb
 
 import (
-	"graviton/migrations/js"
-
 	"github.com/dop251/goja"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -32,8 +30,12 @@ func JSObjectIdCtor(call goja.ConstructorCall, jsvm *goja.Runtime) *goja.Object 
 	return nil
 }
 
-func IsObjectId(jsvm *goja.Runtime, val goja.Value) bool {
-	return js.IsObjectFromConstructorWithGlobalName(jsvm, val, "ObjectId")
+func IsObjectId(jsvm *goja.Runtime, val goja.Value, objectIdCtorVal goja.Value) bool {
+	objectIdCtorObj := objectIdCtorVal.ToObject(jsvm)
+	if objectIdCtorObj == nil {
+		return false
+	}
+	return jsvm.InstanceOf(val, objectIdCtorObj)
 }
 
 func ObjectIdFromJSValue(jsvm *goja.Runtime, val goja.Value) primitive.ObjectID {

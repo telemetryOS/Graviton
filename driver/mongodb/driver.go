@@ -22,9 +22,10 @@ type Options struct {
 }
 
 type Driver struct {
-	config   *config.DatabaseConfig
-	client   *mongo.Client
-	database *mongo.Database
+	config          *config.DatabaseConfig
+	client          *mongo.Client
+	database        *mongo.Database
+	objectIdCtorVal goja.Value
 }
 
 func New(conf *config.DatabaseConfig) *Driver {
@@ -88,14 +89,18 @@ func (d *Driver) Handle(ctx context.Context) any {
 	return &MongoHandle{ctx: ctx, driver: d}
 }
 
-func (d *Driver) Globals(ctx context.Context) map[string]any {
+func (d *Driver) Init(ctx context.Context, runtime *goja.Runtime) {
+	d.objectIdCtorVal = runtime.ToValue(JSObjectIdCtor)
+}
+
+func (d *Driver) Globals(ctx context.Context, runtime *goja.Runtime) map[string]any {
 	globals := map[string]any{}
-	globals["ObjectId"] = JSObjectIdCtor
+	globals["ObjectId"] = d.objectIdCtorVal
 	return globals
 }
 
 func (d *Driver) MaybeFromJSValue(ctx context.Context, jsvm *goja.Runtime, val goja.Value) (any, bool) {
-	if IsObjectId(jsvm, val) {
+	if IsObjectId(jsvm, val, d.objectIdCtorVal) {
 		return ObjectIdFromJSValue(jsvm, val), true
 	}
 	return nil, false

@@ -1,0 +1,6 @@
+[[databases]]
+name = "example"
+kind = "sqlite"
+connection_url = "file:./test.db?cache=shared&mode=rwc"
+database_name = "test"
+migrations_path = "migrations"

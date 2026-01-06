@@ -1,0 +1,6 @@
+[[databases]]
+name = "example"
+kind = "postgresql"
+connection_url = "postgres://postgres@localhost:5432/graviton_test?sslmode=disable"
+database_name = "graviton_test"
+migrations_path = "migrations"
