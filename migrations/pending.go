@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"graviton/config"
-	"graviton/driver"
-	migrationsmeta "graviton/migrations-meta"
+	"github.com/telemetryos/graviton/config"
+	"github.com/telemetryos/graviton/driver"
+	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
 )
 
 func GetPending(ctx context.Context, projectPath string, conf *config.DatabaseConfig, d driver.Driver) ([]*Migration, error) {

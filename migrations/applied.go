@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"graviton/config"
-	"graviton/driver"
+	"github.com/telemetryos/graviton/config"
+	"github.com/telemetryos/graviton/driver"
 )
 
 func GetApplied(ctx context.Context, d driver.Driver) ([]*Migration, error) {

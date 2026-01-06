@@ -3,7 +3,7 @@ package commands
 import (
 	"fmt"
 
-	"graviton/upgrade"
+	"github.com/telemetryos/graviton/upgrade"
 
 	"github.com/spf13/cobra"
 )

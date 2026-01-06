@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"text/template"
 
-	"graviton/config"
-	migrationsmeta "graviton/migrations-meta"
+	"github.com/telemetryos/graviton/config"
+	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
 
 	"github.com/dop251/goja"
 	_ "github.com/go-sql-driver/mysql"

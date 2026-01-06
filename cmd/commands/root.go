@@ -6,10 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"graviton/assets"
-	"graviton/config"
-	"graviton/driver"
-	"graviton/migrations"
+	"github.com/telemetryos/graviton/assets"
+	"github.com/telemetryos/graviton/config"
+	"github.com/telemetryos/graviton/driver"
+	"github.com/telemetryos/graviton/migrations"
 
 	"github.com/spf13/cobra"
 )

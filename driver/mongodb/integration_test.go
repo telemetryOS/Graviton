@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	migrationsmeta "graviton/migrations-meta"
+	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
 
 	"go.mongodb.org/mongo-driver/bson"
 )

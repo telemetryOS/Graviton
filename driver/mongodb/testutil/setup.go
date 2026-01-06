@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"graviton/config"
-	"graviton/driver/mongodb"
+	"github.com/telemetryos/graviton/config"
+	"github.com/telemetryos/graviton/driver/mongodb"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"

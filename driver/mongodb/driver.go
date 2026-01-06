@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"graviton/config"
-	migrationsmeta "graviton/migrations-meta"
+	"github.com/telemetryos/graviton/config"
+	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
 
 	"github.com/dop251/goja"
 	"go.mongodb.org/mongo-driver/bson"

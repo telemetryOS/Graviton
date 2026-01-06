@@ -5,7 +5,7 @@ import (
 	"os"
 	"runtime"
 
-	"graviton/cmd/commands"
+	"github.com/telemetryos/graviton/cmd/commands"
 )
 
 func main() {

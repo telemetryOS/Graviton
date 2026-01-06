@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 
-	"graviton/config"
-	"graviton/driver/mongodb"
-	"graviton/driver/mysql"
-	"graviton/driver/postgresql"
-	"graviton/driver/sqlite"
-	migrationsmeta "graviton/migrations-meta"
+	"github.com/telemetryos/graviton/config"
+	"github.com/telemetryos/graviton/driver/mongodb"
+	"github.com/telemetryos/graviton/driver/mysql"
+	"github.com/telemetryos/graviton/driver/postgresql"
+	"github.com/telemetryos/graviton/driver/sqlite"
+	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
 
 	"github.com/dop251/goja"
 )

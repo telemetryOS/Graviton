@@ -12,8 +12,8 @@ import (
 
 	_ "embed"
 
-	"graviton/driver"
-	"graviton/migrations/js"
+	"github.com/telemetryos/graviton/driver"
+	"github.com/telemetryos/graviton/migrations/js"
 
 	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"

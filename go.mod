@@ -1,4 +1,4 @@
-module graviton
+module github.com/telemetryos/graviton
 
 go 1.24.0
 

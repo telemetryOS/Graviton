@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"graviton/driver"
-	"graviton/migrations"
-	migrationsmeta "graviton/migrations-meta"
+	"github.com/telemetryos/graviton/driver"
+	"github.com/telemetryos/graviton/migrations"
+	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
 
 	"github.com/spf13/cobra"
 )

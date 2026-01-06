@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"graviton/driver/mongodb"
-	"graviton/migrations"
+	"github.com/telemetryos/graviton/driver/mongodb"
+	"github.com/telemetryos/graviton/migrations"
 
 	"github.com/spf13/cobra"
 )
