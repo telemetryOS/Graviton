@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"graviton/internal/config"
-	migrationsmeta "graviton/internal/migrations-meta"
+	"graviton/config"
+	migrationsmeta "graviton/migrations-meta"
 
 	"github.com/dop251/goja"
 	"go.mongodb.org/mongo-driver/bson"
@@ -120,44 +120,51 @@ func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*migration
 }
 
 func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []*migrationsmeta.MigrationMetadata) error {
+	migrationsCollection := d.getMigrationsCollection()
+	_, err := migrationsCollection.DeleteMany(ctx, bson.M{})
+	if err != nil {
+		return err
+	}
+
+	if len(migrationsMetadata) == 0 {
+		return nil
+	}
+
+	var documents []any
+	for _, migrationMetadata := range migrationsMetadata {
+		documents = append(documents, migrationMetadata)
+	}
+	_, err = migrationsCollection.InsertMany(ctx, documents)
+	return err
+}
+
+func (d *Driver) WithTransaction(ctx context.Context, fn func(context.Context) error) error {
 	session, err := d.client.StartSession()
 	if err != nil {
 		return err
 	}
 	defer session.EndSession(ctx)
 
-	_, err = session.WithTransaction(ctx, func(ctx mongo.SessionContext) (any, error) {
-		migrationsCollection := d.getMigrationsCollection()
-		migrationsCollection.DeleteMany(ctx, bson.M{})
-		var documents []any
-		for _, migrationMetadata := range migrationsMetadata {
-			documents = append(documents, migrationMetadata)
-		}
-		_, err := migrationsCollection.InsertMany(ctx, documents)
-		if err != nil {
+	_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (result any, returnErr error) {
+		// Recover from panics in the callback and convert to errors
+		defer func() {
+			if r := recover(); r != nil {
+				if e, ok := r.(error); ok {
+					returnErr = e
+				} else {
+					returnErr = fmt.Errorf("panic in transaction: %v", r)
+				}
+			}
+		}()
+
+		// Pass sessCtx as context.Context (mongo.SessionContext embeds context.Context)
+		if err := fn(sessCtx); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	})
 
 	return err
-}
-
-func (d *Driver) WithTransaction(ctx context.Context, fn func() error) error {
-	session, err := d.client.StartSession()
-	if err != nil {
-		return err
-	}
-	defer session.EndSession(ctx)
-
-	session.WithTransaction(ctx, func(ctx mongo.SessionContext) (any, error) {
-		if err := fn(); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	})
-
-	return nil
 }
 
 func (d *Driver) getMigrationsCollection() *mongo.Collection {

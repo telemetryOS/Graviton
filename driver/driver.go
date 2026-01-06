@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"graviton/internal/config"
-	"graviton/internal/driver/mongodb"
-	migrationsmeta "graviton/internal/migrations-meta"
+	"graviton/config"
+	"graviton/driver/mongodb"
+	migrationsmeta "graviton/migrations-meta"
 
 	"github.com/dop251/goja"
 )
@@ -17,7 +17,7 @@ type Driver interface {
 	Disconnect(ctx context.Context) error
 	GetAppliedMigrationsMetadata(ctx context.Context) ([]*migrationsmeta.MigrationMetadata, error)
 	SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []*migrationsmeta.MigrationMetadata) error
-	WithTransaction(ctx context.Context, fn func() error) error
+	WithTransaction(ctx context.Context, fn func(context.Context) error) error
 	Handle(ctx context.Context) any
 	Globals(ctx context.Context) map[string]any
 	MaybeFromJSValue(ctx context.Context, runtime *goja.Runtime, value goja.Value) (any, bool)

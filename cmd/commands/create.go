@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"graviton/internal/driver/mongodb"
-	"graviton/internal/migrations"
+	"graviton/driver/mongodb"
+	"graviton/migrations"
 
 	"github.com/spf13/cobra"
 )

@@ -3,7 +3,7 @@ package migrations
 import (
 	_ "embed"
 
-	migrationsmeta "graviton/internal/migrations-meta"
+	migrationsmeta "graviton/migrations-meta"
 )
 
 type Migration struct {

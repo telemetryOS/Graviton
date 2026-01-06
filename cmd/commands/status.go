@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"graviton/internal/driver"
-	"graviton/internal/migrations"
+	"graviton/driver"
+	"graviton/migrations"
 
 	"github.com/spf13/cobra"
 )

@@ -12,8 +12,8 @@ import (
 
 	_ "embed"
 
-	"graviton/internal/driver"
-	"graviton/internal/migrations/js"
+	"graviton/driver"
+	"graviton/migrations/js"
 
 	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"

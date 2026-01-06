@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"graviton/internal/driver"
-	"graviton/internal/migrations"
-	migrationsmeta "graviton/internal/migrations-meta"
+	"graviton/driver"
+	"graviton/migrations"
+	migrationsmeta "graviton/migrations-meta"
 
 	"github.com/spf13/cobra"
 )
@@ -114,14 +114,14 @@ var downCmd = &cobra.Command{
 		}
 		fmt.Println(strings.Join(rollbackMigrationNames, "\n"))
 
-		err = drv.WithTransaction(ctx, func() error {
+		err = drv.WithTransaction(ctx, func(sessCtx context.Context) error {
 			for _, rollbackMigration := range rollbackMigrations {
 				err := rollbackMigration.Script.Down()
 				if err != nil {
 					return err
 				}
 
-				err = drv.SetAppliedMigrationsMetadata(ctx, appliedMigrationsMetadata)
+				err = drv.SetAppliedMigrationsMetadata(sessCtx, appliedMigrationsMetadata)
 				if err != nil {
 					return err
 				}

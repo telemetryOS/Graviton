@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"graviton/assets"
-	"graviton/internal/config"
-	"graviton/internal/driver"
-	"graviton/internal/migrations"
+	"graviton/config"
+	"graviton/driver"
+	"graviton/migrations"
 
 	"github.com/spf13/cobra"
 )

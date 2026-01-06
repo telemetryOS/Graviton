@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"graviton/internal/driver"
-	"graviton/internal/migrations"
-	migrationsmeta "graviton/internal/migrations-meta"
+	"graviton/driver"
+	"graviton/migrations"
+	migrationsmeta "graviton/migrations-meta"
 
 	"github.com/spf13/cobra"
 )
@@ -93,11 +93,11 @@ var upCmd = &cobra.Command{
 		}
 		fmt.Println(strings.Join(applyMigrationNames, "\n"))
 
-		err = drv.WithTransaction(ctx, func() error {
+		err = drv.WithTransaction(ctx, func(sessCtx context.Context) error {
 			for _, applyMigration := range applyMigrations {
 
 				if err := applyMigration.Script.Up(); err != nil {
-					panic(err)
+					return err
 				}
 
 				applyMigration.AppliedAt = time.Now()
@@ -108,8 +108,8 @@ var upCmd = &cobra.Command{
 				newlyAppliedMigrationsMetadata = append(newlyAppliedMigrationsMetadata, pendingMigration.MigrationMetadata)
 			}
 
-			if err := drv.SetAppliedMigrationsMetadata(ctx, newlyAppliedMigrationsMetadata); err != nil {
-				panic(err)
+			if err := drv.SetAppliedMigrationsMetadata(sessCtx, newlyAppliedMigrationsMetadata); err != nil {
+				return err
 			}
 
 			return nil

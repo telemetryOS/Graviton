@@ -52,7 +52,10 @@ func (c *Collection) Find(filter any, options ...*FindOptions) []map[string]any 
 
 func (c *Collection) FindOne(filter any, options ...*FindOneOptions) map[string]any {
 	var result map[string]any
-	c.driver.database.Collection(c.name).FindOne(c.ctx, filter, options...).Decode(&result)
+	err := c.driver.database.Collection(c.name).FindOne(c.ctx, filter, options...).Decode(&result)
+	if err != nil {
+		panic(err)
+	}
 	return result
 }
 

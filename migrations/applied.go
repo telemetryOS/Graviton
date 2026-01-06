@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"graviton/internal/config"
-	"graviton/internal/driver"
+	"graviton/config"
+	"graviton/driver"
 )
 
 func GetApplied(ctx context.Context, d driver.Driver) ([]*Migration, error) {

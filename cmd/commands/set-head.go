@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"graviton/internal/driver"
-	"graviton/internal/migrations"
-	migrationsmeta "graviton/internal/migrations-meta"
+	"graviton/driver"
+	"graviton/migrations"
+	migrationsmeta "graviton/migrations-meta"
 
 	"github.com/spf13/cobra"
 )
