@@ -33,15 +33,22 @@ type contextKey string
 
 const txContextKey contextKey = "mysql_tx"
 
-type Driver struct {
-	config            *config.DatabaseConfig
-	db                *sql.DB
+type driverRuntimeData struct {
 	sqlQueryCtorVal   goja.Value
 	sqlTagFunctionVal goja.Value
 }
 
+type Driver struct {
+	config      *config.DatabaseConfig
+	db          *sql.DB
+	runtimeData map[*goja.Runtime]*driverRuntimeData
+}
+
 func New(conf *config.DatabaseConfig) *Driver {
-	return &Driver{config: conf}
+	return &Driver{
+		config:      conf,
+		runtimeData: make(map[*goja.Runtime]*driverRuntimeData),
+	}
 }
 
 func (d *Driver) Connect(ctx context.Context) error {
@@ -176,19 +183,26 @@ func (d *Driver) Handle(ctx context.Context) any {
 }
 
 func (d *Driver) Init(ctx context.Context, runtime *goja.Runtime) {
-	d.sqlQueryCtorVal = runtime.ToValue(SQLQueryCtor)
-	d.sqlTagFunctionVal = runtime.ToValue(createSQLTagFunction(d))
+	d.runtimeData[runtime] = &driverRuntimeData{
+		sqlQueryCtorVal:   runtime.ToValue(SQLQueryCtor),
+		sqlTagFunctionVal: runtime.ToValue(createSQLTagFunction(d)),
+	}
 }
 
 func (d *Driver) Globals(ctx context.Context, runtime *goja.Runtime) map[string]any {
+	rtData := d.runtimeData[runtime]
 	globals := map[string]any{}
-	globals["SQLQuery"] = d.sqlQueryCtorVal
-	globals["sql"] = d.sqlTagFunctionVal
+	globals["SQLQuery"] = rtData.sqlQueryCtorVal
+	globals["sql"] = rtData.sqlTagFunctionVal
 	return globals
 }
 
 func (d *Driver) MaybeFromJSValue(ctx context.Context, runtime *goja.Runtime, value goja.Value) (any, bool) {
-	if IsSQLQuery(runtime, value, d.sqlQueryCtorVal) {
+	rtData := d.runtimeData[runtime]
+	if rtData == nil {
+		return nil, false
+	}
+	if IsSQLQuery(runtime, value, rtData.sqlQueryCtorVal) {
 		return SQLQueryFromJSValue(runtime, value), true
 	}
 	return nil, false

@@ -96,7 +96,7 @@ func createSQLTagFunction(d *Driver) func(goja.FunctionCall, *goja.Runtime) goja
 
 		validateSQL(query)
 
-		sqlQueryInstance, err := vm.New(d.sqlQueryCtorVal, vm.ToValue(query), vm.ToValue(values))
+		sqlQueryInstance, err := vm.New(d.runtimeData[vm].sqlQueryCtorVal, vm.ToValue(query), vm.ToValue(values))
 		if err != nil {
 			panic(vm.ToValue(fmt.Sprintf("Failed to create SQLQuery instance: %v", err)))
 		}

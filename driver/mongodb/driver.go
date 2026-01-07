@@ -21,15 +21,22 @@ type Options struct {
 	Database string
 }
 
-type Driver struct {
-	config          *config.DatabaseConfig
-	client          *mongo.Client
-	database        *mongo.Database
+type driverRuntimeData struct {
 	objectIdCtorVal goja.Value
 }
 
+type Driver struct {
+	config      *config.DatabaseConfig
+	client      *mongo.Client
+	database    *mongo.Database
+	runtimeData map[*goja.Runtime]*driverRuntimeData
+}
+
 func New(conf *config.DatabaseConfig) *Driver {
-	return &Driver{config: conf}
+	return &Driver{
+		config:      conf,
+		runtimeData: make(map[*goja.Runtime]*driverRuntimeData),
+	}
 }
 
 func (d *Driver) Connect(ctx context.Context) error {
@@ -90,17 +97,23 @@ func (d *Driver) Handle(ctx context.Context) any {
 }
 
 func (d *Driver) Init(ctx context.Context, runtime *goja.Runtime) {
-	d.objectIdCtorVal = runtime.ToValue(JSObjectIdCtor)
+	d.runtimeData[runtime] = &driverRuntimeData{
+		objectIdCtorVal: runtime.ToValue(JSObjectIdCtor),
+	}
 }
 
 func (d *Driver) Globals(ctx context.Context, runtime *goja.Runtime) map[string]any {
 	globals := map[string]any{}
-	globals["ObjectId"] = d.objectIdCtorVal
+	globals["ObjectId"] = d.runtimeData[runtime].objectIdCtorVal
 	return globals
 }
 
 func (d *Driver) MaybeFromJSValue(ctx context.Context, jsvm *goja.Runtime, val goja.Value) (any, bool) {
-	if IsObjectId(jsvm, val, d.objectIdCtorVal) {
+	rtData := d.runtimeData[jsvm]
+	if rtData == nil {
+		return nil, false
+	}
+	if IsObjectId(jsvm, val, rtData.objectIdCtorVal) {
 		return ObjectIdFromJSValue(jsvm, val), true
 	}
 	return nil, false
