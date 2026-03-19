@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/telemetryos/graviton/config"
 	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
@@ -58,7 +60,7 @@ func (d *Driver) Connect(ctx context.Context) error {
 	if err := result.Decode(&buildInfo); err != nil {
 		return fmt.Errorf("failed to get MongoDB server version: %w", err)
 	}
-	if buildInfo.Version < "4.0" {
+	if !isVersionAtLeast(buildInfo.Version, 4, 0) {
 		return errors.New("MongoDB version must be at least 4.0")
 	}
 
@@ -187,4 +189,20 @@ func (d *Driver) WithTransaction(ctx context.Context, fn func(context.Context) e
 
 func (d *Driver) getMigrationsCollection() *mongo.Collection {
 	return d.database.Collection(MIGRATIONS_COLLECTION)
+}
+
+func isVersionAtLeast(version string, minMajor, minMinor int) bool {
+	parts := strings.SplitN(version, ".", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return false
+	}
+	return major > minMajor || (major == minMajor && minor >= minMinor)
 }
