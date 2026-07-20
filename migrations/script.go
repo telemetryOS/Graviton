@@ -116,6 +116,13 @@ func (s *Script) Evaluate() {
 }
 
 func (s *Script) intoJs(vr reflect.Value) goja.Value {
+	// A zero Value comes from dereferencing a nil pointer/interface (e.g. the
+	// nil UpsertedID on a mongo.UpdateResult when no upsert occurred). Calling
+	// Interface on it panics, so surface it to JS as null instead.
+	if !vr.IsValid() {
+		return goja.Null()
+	}
+
 	intf := vr.Interface()
 
 	if gojaVal, ok := intf.(goja.Value); ok {
@@ -213,6 +220,9 @@ func (s *Script) intoJs(vr reflect.Value) goja.Value {
 			})
 		}
 	case reflect.Ptr, reflect.Interface:
+		if vr.IsNil() {
+			return goja.Null()
+		}
 		return s.intoJs(vr.Elem())
 	case reflect.Array:
 		arr := s.runtime.NewArray()

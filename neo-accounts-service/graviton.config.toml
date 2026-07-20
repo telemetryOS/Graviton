@@ -1,0 +1,17 @@
+# Graviton configuration for the neo-accounts-service MongoDB database.
+#
+# The default connection targets a local development Mongo, which must be a
+# replica set (Graviton requires transactions). This matches Accounts-Service's
+# local default (mongodb://localhost:27017/neo-accounts-service).
+#
+# For deployed environments, point connection_url / database_name at the target
+# cluster before running (edit this file for the run, or supply a per-env copy).
+# Graviton also substitutes ${VAR} tokens from the environment before parsing,
+# so a connection_url of "${SOME_VAR}" can be injected at run time when desired.
+
+[[databases]]
+name = "neo-accounts-service"
+kind = "mongodb"
+connection_url = "mongodb://localhost:27017"
+database_name = "neo-accounts-service"
+migrations_path = "migrations"
