@@ -3,8 +3,8 @@
 // Establishes the single TelemetryOS root organization and re-parents every
 // existing account under it, so the `accounts` collection becomes one tree
 // (see Accounts-Service docs/specs/2026-07-20-org-tree-emulation-design.md §1,
-// §7). It also seeds the root org's two system roles ("Org Owner" with the
-// 39-verb ROOT permission set, "Org Member" with organizations.read only).
+// §7). It also seeds the root org's two system roles ("Organization Owner" with the
+// 39-verb ROOT permission set, "Organization Member" with organizations.read only).
 //
 // The migration is idempotent and re-runnable:
 //   * The root org is identified by the stable marker
@@ -14,7 +14,7 @@
 //   * Accounts are re-parented only when not already under the root
 //     (ancestors does not yet contain ROOT_ID), so re-runs are no-ops.
 
-// The 39 ROOT "Org Owner" permissions (OrgOwnerPermissions ∪ StaffPermissions),
+// The 42 ROOT "Organization Owner" permissions (OrgOwnerPermissions ∪ StaffPermissions),
 // exact strings, sorted.
 const ORG_OWNER_PERMISSIONS: string[] = [
   "accounts.create",
@@ -34,6 +34,9 @@ const ORG_OWNER_PERMISSIONS: string[] = [
   "devicePurchases.update",
   "emulation.create",
   "events.readAny",
+  "siteAnalyticsTokens.create",
+  "siteAnalyticsTokens.read",
+  "siteAnalyticsTokens.delete",
   "invoices.payAny",
   "invoices.readAny",
   "logs.manageRelay",
@@ -122,8 +125,8 @@ export function up(db: Handle) {
 
   // --- Step 2: seed the root org's roles, idempotent by (accountId, name) ---
   const roleSpecs = [
-    { name: "Org Owner", permissions: ORG_OWNER_PERMISSIONS },
-    { name: "Org Member", permissions: ORG_MEMBER_PERMISSIONS },
+    { name: "Organization Owner", permissions: ORG_OWNER_PERMISSIONS },
+    { name: "Organization Member", permissions: ORG_MEMBER_PERMISSIONS },
   ];
 
   let rolesUpserted = 0;
@@ -195,7 +198,7 @@ export function down(db: Handle) {
 
   roles.deleteMany({
     accountId: rootId,
-    name: { $in: ["Org Owner", "Org Member"] },
+    name: { $in: ["Organization Owner", "Organization Member"] },
     system: true,
   });
 
