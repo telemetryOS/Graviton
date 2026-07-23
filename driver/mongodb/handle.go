@@ -16,3 +16,11 @@ func (h *MongoHandle) Collection(name string) *Collection {
 func (h *MongoHandle) Db(name string) *MongoDatabaseHandle {
 	return &MongoDatabaseHandle{ctx: h.ctx, driver: h.driver, database: h.driver.client.Database(name)}
 }
+
+func (h *MongoHandle) Sibling(alias string) *MongoDatabaseHandle {
+	name, err := h.driver.resolveSiblingDatabaseName(alias)
+	if err != nil {
+		panic(err)
+	}
+	return h.Db(name)
+}

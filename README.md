@@ -90,12 +90,22 @@ export function down(db: Handle) {
 
 #### Cross-Database Access (MongoDB)
 
-The MongoDB handle can reach sibling databases on the **same cluster** through the
-`db(name)` accessor. It returns a database-scoped handle with the same
-`collection(name)` surface, bound to the same MongoDB client and — while a
-migration is running — the same transaction. Reads and writes against a sibling
-database therefore join the migration's transaction and roll back together with
-the primary database if the migration fails.
+The MongoDB handle can reach sibling databases on the **same cluster**. Both
+accessors return a database-scoped handle with the same `collection(name)`
+surface, bound to the same MongoDB client and — while a migration is running —
+the same transaction. Reads and writes against a sibling database therefore join
+the migration's transaction and roll back together with the primary database if
+the migration fails.
+
+- **`sibling(alias)` — recommended.** Resolves a configured database *alias* (the
+  `name` of a `[[databases]]` entry) to that entry's per-environment physical
+  `database_name`. Because the physical name of a shared database usually differs
+  by environment (e.g. `telemetry_v1` deployed vs `telemetry_v1_development`
+  locally), aliasing keeps migrations portable: the same migration runs in every
+  environment and Graviton substitutes the right physical name from config.
+- **`db(name)` — literal names.** Reaches a sibling database by its literal
+  physical name, bypassing config. Use it only when the target genuinely has a
+  fixed name across every environment; otherwise prefer `sibling(alias)`.
 
 This is the intended pattern for legacy → modern ETL migrations, where the
 migration reads from a legacy database and writes into the modern target
@@ -103,8 +113,10 @@ database configured for the project:
 
 ```typescript
 export function up(db: Handle) {
-  // Read from the legacy database on the same cluster.
-  const legacyUsers = db.db('telemetry_v1').collection('users').find({})
+  // Read from the legacy database on the same cluster. `legacy` is a configured
+  // [[databases]] alias, so this resolves to the right physical database in
+  // every environment.
+  const legacyUsers = db.sibling('legacy').collection('users').find({})
 
   // Transform and write into the configured target database (db.collection).
   for (const legacyUser of legacyUsers) {
@@ -124,19 +136,21 @@ export function down(db: Handle) {
 
 Caveats:
 
-- **Same cluster only.** `db(name)` shares the migration's MongoDB client, so it
-  can only reach databases hosted on the cluster named by the migration's
-  `connection_url`. It cannot read from or write to a different server. To move
-  data between separate clusters, export/import out of band rather than reaching
-  across with `db(name)`.
+- **Same cluster only.** `sibling(alias)` and `db(name)` share the migration's
+  MongoDB client, so they can only reach databases hosted on the cluster named by
+  the migration's `connection_url`. `sibling(alias)` errors cleanly if the alias
+  is not configured, is not a `mongodb` database, or resolves to a different
+  connection/cluster. To move data between separate clusters, export/import out of
+  band rather than reaching across.
 - **Transaction scope.** Cross-database transactions require a single MongoDB
   cluster (a replica set, which Graviton already requires). All databases you
   touch in one migration share one transaction and commit or roll back as a
   unit.
-- **The configured `database_name` is still the migration's home.** `db(name)`
-  is for reaching *other* databases; `db.collection(...)` continues to target the
-  database configured for the project. Applied-migration bookkeeping is always
-  recorded in the configured database.
+- **The configured `database_name` is still the migration's home.**
+  `sibling(alias)`/`db(name)` are for reaching *other* databases;
+  `db.collection(...)` continues to target the database configured for the
+  project. Applied-migration bookkeeping is always recorded in the configured
+  database.
 
 ### SQL Migrations
 
@@ -343,7 +357,10 @@ interface Database {
 
 interface Handle {
   collection(name: string): Collection
-  // Access a sibling database on the same cluster (see Cross-Database Access).
+  // Access a sibling database on the same cluster by its configured alias,
+  // resolved to the per-environment physical name (see Cross-Database Access).
+  sibling(alias: string): Database
+  // Access a sibling database on the same cluster by literal physical name.
   db(name: string): Database
 }
 

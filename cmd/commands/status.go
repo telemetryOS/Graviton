@@ -38,7 +38,7 @@ var statusCmd = &cobra.Command{
 
 		fmt.Println("Migration status for database `" + databaseName + "`")
 
-		drv := driver.FromDatabaseConfig(databaseConf)
+		drv := driver.FromDatabaseConfig(databaseConf, conf.Databases)
 		if err := drv.Connect(ctx); err != nil {
 			panic(err)
 		}

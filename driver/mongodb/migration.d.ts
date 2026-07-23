@@ -23,6 +23,7 @@ type Database = {
 
 type Handle = {
   collection: (name: string) => Collection;
+  sibling: (alias: string) => Database;
   db: (name: string) => Database;
 }
 

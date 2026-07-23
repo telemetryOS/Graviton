@@ -27,7 +27,11 @@ type Driver interface {
 	MaybeFromJSValue(ctx context.Context, runtime *goja.Runtime, value goja.Value) (any, bool)
 }
 
-func FromDatabaseConfig(conf *config.DatabaseConfig) Driver {
+// FromDatabaseConfig builds the driver for conf. databases is the full set of
+// configured [[databases]] entries; the MongoDB driver retains it so
+// migrations can resolve sibling database aliases against their per-environment
+// physical database_name. Callers pass config.Config.Databases.
+func FromDatabaseConfig(conf *config.DatabaseConfig, databases []*config.DatabaseConfig) Driver {
 	if conf == nil {
 		fmt.Println("Unknown database")
 		os.Exit(1)
@@ -35,7 +39,7 @@ func FromDatabaseConfig(conf *config.DatabaseConfig) Driver {
 	}
 	switch conf.Kind {
 	case config.DatabaseKindMongoDB:
-		return mongodb.New(conf)
+		return mongodb.New(conf, databases)
 	case config.DatabaseKindPostgreSQL:
 		return postgresql.New(conf)
 	case config.DatabaseKindMySQL:

@@ -29,17 +29,65 @@ type driverRuntimeData struct {
 
 type Driver struct {
 	config      *config.DatabaseConfig
+	databases   []*config.DatabaseConfig
 	client      *mongo.Client
 	database    *mongo.Database
 	sessionCtx  mongo.SessionContext
 	runtimeData map[*goja.Runtime]*driverRuntimeData
 }
 
-func New(conf *config.DatabaseConfig) *Driver {
+// New builds a MongoDB driver for conf. databases is the full set of configured
+// [[databases]] entries, retained so the migration handle's sibling(alias)
+// accessor can resolve a stable database alias to its per-environment physical
+// database_name. It may be nil when sibling resolution is not needed.
+func New(conf *config.DatabaseConfig, databases []*config.DatabaseConfig) *Driver {
 	return &Driver{
 		config:      conf,
+		databases:   databases,
 		runtimeData: make(map[*goja.Runtime]*driverRuntimeData),
 	}
+}
+
+// resolveSiblingDatabaseName resolves a configured database alias (the `name`
+// field of a [[databases]] entry) to the physical database_name that db(name)
+// expects. Sibling access reuses this driver's client, session, and
+// transaction, so the alias must name another mongodb database configured on
+// the same connection/cluster; otherwise a clean error is returned.
+func (d *Driver) resolveSiblingDatabaseName(alias string) (string, error) {
+	var conf *config.DatabaseConfig
+	for _, database := range d.databases {
+		if database.Name == alias {
+			conf = database
+			break
+		}
+	}
+	if conf == nil {
+		return "", fmt.Errorf(
+			"no database aliased %q is configured; configured databases: %s",
+			alias, strings.Join(d.configuredDatabaseAliases(), ", "),
+		)
+	}
+	if conf.Kind != config.DatabaseKindMongoDB {
+		return "", fmt.Errorf(
+			"database %q is a %s database; sibling() only reaches mongodb databases on the same cluster",
+			alias, conf.Kind,
+		)
+	}
+	if conf.ConnectionUrl != d.config.ConnectionUrl {
+		return "", fmt.Errorf(
+			"database %q is on a different MongoDB connection; sibling() only reaches databases on the same cluster",
+			alias,
+		)
+	}
+	return conf.DatabaseName, nil
+}
+
+func (d *Driver) configuredDatabaseAliases() []string {
+	aliases := make([]string, 0, len(d.databases))
+	for _, database := range d.databases {
+		aliases = append(aliases, database.Name)
+	}
+	return aliases
 }
 
 func (d *Driver) Connect(ctx context.Context) error {

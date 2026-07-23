@@ -20,7 +20,7 @@ var TargetDatabaseNamesStr string
 // overridden at build time with:
 //
 //	-ldflags "-X github.com/telemetryos/graviton/cmd/commands.Version=$(git describe --tags)"
-var Version = "v1.5.0"
+var Version = "v1.6.0"
 
 var rootCmd = &cobra.Command{
 	Use:     "graviton",
@@ -63,7 +63,7 @@ func databaseNamesWithPrefix(conf *config.Config, prefix string) []string {
 
 func pendingMigrationNamesWithPrefix(conf *config.Config, databaseName string, prefix string) []string {
 	databaseConf := conf.Database(databaseName)
-	drv := driver.FromDatabaseConfig(databaseConf)
+	drv := driver.FromDatabaseConfig(databaseConf, conf.Databases)
 	ctx := context.Background()
 	if err := drv.Connect(ctx); err != nil {
 		return []string{}
@@ -85,7 +85,7 @@ func pendingMigrationNamesWithPrefix(conf *config.Config, databaseName string, p
 
 func appliedMigrationNamesWithPrefix(conf *config.Config, databaseName string, prefix string) []string {
 	databaseConf := conf.Database(databaseName)
-	drv := driver.FromDatabaseConfig(databaseConf)
+	drv := driver.FromDatabaseConfig(databaseConf, conf.Databases)
 	ctx := context.Background()
 	if err := drv.Connect(ctx); err != nil {
 		return []string{}
@@ -107,7 +107,7 @@ func appliedMigrationNamesWithPrefix(conf *config.Config, databaseName string, p
 
 func appliedMigrationNamesFromDiskWithPrefix(conf *config.Config, databaseName string, prefix string) []string {
 	databaseConf := conf.Database(databaseName)
-	drv := driver.FromDatabaseConfig(databaseConf)
+	drv := driver.FromDatabaseConfig(databaseConf, conf.Databases)
 	ctx := context.Background()
 	if err := drv.Connect(ctx); err != nil {
 		return []string{}

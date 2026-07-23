@@ -21,11 +21,13 @@ func setupTestDriver(t *testing.T) (*Driver, context.Context) {
 	t.Helper()
 
 	conf := &config.DatabaseConfig{
+		Name:          "primary",
+		Kind:          config.DatabaseKindMongoDB,
 		ConnectionUrl: testDatabaseURL,
 		DatabaseName:  testDatabaseName,
 	}
 
-	drv := New(conf)
+	drv := New(conf, []*config.DatabaseConfig{conf, testSiblingDatabaseConfig()})
 	ctx := context.Background()
 
 	if err := drv.Connect(ctx); err != nil {
@@ -63,7 +65,7 @@ func Test_Driver_Connect(t *testing.T) {
 		DatabaseName:  testDatabaseName,
 	}
 
-	drv := New(conf)
+	drv := New(conf, []*config.DatabaseConfig{conf})
 	ctx := context.Background()
 
 	err := drv.Connect(ctx)
