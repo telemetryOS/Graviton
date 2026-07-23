@@ -2,6 +2,7 @@ package mongodb
 
 import (
 	"context"
+	"errors"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -68,6 +69,11 @@ func (c *Collection) FindOne(filter any, options ...*FindOneOptions) map[string]
 	var result map[string]any
 	err := c.database.Collection(c.name).FindOne(c.opCtx(), filter, options...).Decode(&result)
 	if err != nil {
+		// No match is a normal outcome for find-before-insert patterns; JS-land
+		// receives null (a nil map) rather than a panic.
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil
+		}
 		panic(err)
 	}
 	return result
