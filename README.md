@@ -88,6 +88,56 @@ export function down(db: Handle) {
 }
 ```
 
+#### Cross-Database Access (MongoDB)
+
+The MongoDB handle can reach sibling databases on the **same cluster** through the
+`db(name)` accessor. It returns a database-scoped handle with the same
+`collection(name)` surface, bound to the same MongoDB client and — while a
+migration is running — the same transaction. Reads and writes against a sibling
+database therefore join the migration's transaction and roll back together with
+the primary database if the migration fails.
+
+This is the intended pattern for legacy → modern ETL migrations, where the
+migration reads from a legacy database and writes into the modern target
+database configured for the project:
+
+```typescript
+export function up(db: Handle) {
+  // Read from the legacy database on the same cluster.
+  const legacyUsers = db.db('telemetry_v1').collection('users').find({})
+
+  // Transform and write into the configured target database (db.collection).
+  for (const legacyUser of legacyUsers) {
+    db.collection('users').insertOne({
+      _id: legacyUser._id,
+      name: legacyUser.full_name,
+      email: legacyUser.email_address,
+      migratedAt: new Date()
+    })
+  }
+}
+
+export function down(db: Handle) {
+  db.collection('users').deleteMany({ migratedAt: { $exists: true } })
+}
+```
+
+Caveats:
+
+- **Same cluster only.** `db(name)` shares the migration's MongoDB client, so it
+  can only reach databases hosted on the cluster named by the migration's
+  `connection_url`. It cannot read from or write to a different server. To move
+  data between separate clusters, export/import out of band rather than reaching
+  across with `db(name)`.
+- **Transaction scope.** Cross-database transactions require a single MongoDB
+  cluster (a replica set, which Graviton already requires). All databases you
+  touch in one migration share one transaction and commit or roll back as a
+  unit.
+- **The configured `database_name` is still the migration's home.** `db(name)`
+  is for reaching *other* databases; `db.collection(...)` continues to target the
+  database configured for the project. Applied-migration bookkeeping is always
+  recorded in the configured database.
+
 ### SQL Migrations
 
 SQL migrations for PostgreSQL, MySQL, and SQLite use a smart `sql` tag function that provides automatic parameterization and validation. The sql tag prevents SQL injection by automatically converting template literals into parameterized queries with proper placeholder syntax for each database.
@@ -287,8 +337,14 @@ interface Collection {
   deleteMany(filter: any): void
 }
 
+interface Database {
+  collection(name: string): Collection
+}
+
 interface Handle {
   collection(name: string): Collection
+  // Access a sibling database on the same cluster (see Cross-Database Access).
+  db(name: string): Database
 }
 
 declare class ObjectId {
@@ -399,6 +455,11 @@ This ensures migrations can be run on fresh database instances and new environme
 ### Transaction Behavior
 
 Each migration runs in its own transaction. If migration 5 fails, migrations 1-4 remain committed to the database. This allows for incremental progress and makes it easier to fix issues without losing work.
+
+For MongoDB, every collection operation a migration performs — including
+cross-database operations reached through `db(name)` — runs inside that
+migration's transaction, so a failure rolls the whole migration back atomically.
+Cross-database transactions are limited to databases on a single cluster.
 
 ### SQL Injection Prevention
 

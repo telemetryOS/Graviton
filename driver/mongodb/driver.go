@@ -31,6 +31,7 @@ type Driver struct {
 	config      *config.DatabaseConfig
 	client      *mongo.Client
 	database    *mongo.Database
+	sessionCtx  mongo.SessionContext
 	runtimeData map[*goja.Runtime]*driverRuntimeData
 }
 
@@ -166,6 +167,12 @@ func (d *Driver) WithTransaction(ctx context.Context, fn func(context.Context) e
 	defer session.EndSession(ctx)
 
 	_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (result any, returnErr error) {
+		// Publish the active session so the JS-facing collection handles (both
+		// the primary database and any sibling databases reached via db(name))
+		// route their reads and writes through this transaction.
+		d.sessionCtx = sessCtx
+		defer func() { d.sessionCtx = nil }()
+
 		// Recover from panics in the callback and convert to errors
 		defer func() {
 			if r := recover(); r != nil {

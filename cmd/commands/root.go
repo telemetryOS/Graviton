@@ -16,11 +16,18 @@ import (
 
 var TargetDatabaseNamesStr string
 
+// Version is the Graviton version. It defaults to the released tag and can be
+// overridden at build time with:
+//
+//	-ldflags "-X github.com/telemetryos/graviton/cmd/commands.Version=$(git describe --tags)"
+var Version = "v1.5.0"
+
 var rootCmd = &cobra.Command{
-	Use:   "graviton",
-	Short: "Graviton - A migration tool",
-	Long:  assets.Description,
-	Args:  cobra.NoArgs,
+	Use:     "graviton",
+	Short:   "Graviton - A migration tool",
+	Long:    assets.Description,
+	Version: Version,
+	Args:    cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("%s\n", assets.Splash)
 		cmd.Help()
@@ -126,6 +133,22 @@ func allMigrationNamesWithPrefix(conf *config.Config, databaseName string, prefi
 	return append(appliedMigrationNames, pendingMigrationNames...)
 }
 
+func assertDatabaseConfigured(conf *config.Config, databaseName string) {
+	if conf.Database(databaseName) != nil {
+		return
+	}
+	fmt.Printf("Unknown database `%s`.\n", databaseName)
+	if len(conf.Databases) == 0 {
+		fmt.Println("No databases are configured in " + config.CONFIG_NAME + ".")
+	} else {
+		fmt.Println("Configured databases:")
+		for _, database := range conf.Databases {
+			fmt.Println("   - " + database.Name)
+		}
+	}
+	os.Exit(1)
+}
+
 func resolveAndAssertDBName(conf *config.Config, cmd *cobra.Command, args []string) string {
 	databaseName := ""
 	if len(args) == 1 {
@@ -138,6 +161,7 @@ func resolveAndAssertDBName(conf *config.Config, cmd *cobra.Command, args []stri
 			os.Exit(0)
 		}
 	}
+	assertDatabaseConfigured(conf, databaseName)
 	return databaseName
 }
 
@@ -158,5 +182,6 @@ func resolveAndAssertDBNameAndMigration(conf *config.Config, cmd *cobra.Command,
 			os.Exit(0)
 		}
 	}
+	assertDatabaseConfigured(conf, databaseName)
 	return databaseName, migrationName
 }

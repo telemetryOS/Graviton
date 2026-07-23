@@ -28,6 +28,11 @@ type Driver interface {
 }
 
 func FromDatabaseConfig(conf *config.DatabaseConfig) Driver {
+	if conf == nil {
+		fmt.Println("Unknown database")
+		os.Exit(1)
+		return nil
+	}
 	switch conf.Kind {
 	case config.DatabaseKindMongoDB:
 		return mongodb.New(conf)

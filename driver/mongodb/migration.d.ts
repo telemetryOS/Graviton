@@ -17,8 +17,13 @@ type Collection = {
   deleteOne(filter: Record<string, any>): void;
 }
 
+type Database = {
+  collection: (name: string) => Collection;
+}
+
 type Handle = {
   collection: (name: string) => Collection;
+  db: (name: string) => Database;
 }
 
 type Console = {

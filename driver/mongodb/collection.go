@@ -8,9 +8,10 @@ import (
 )
 
 type Collection struct {
-	ctx    context.Context
-	driver *Driver
-	name   string
+	ctx      context.Context
+	driver   *Driver
+	database *mongo.Database
+	name     string
 }
 
 type InsertManyOptions = options.InsertManyOptions
@@ -20,8 +21,20 @@ type FindOneOptions = options.FindOneOptions
 type UpdateOptions = options.UpdateOptions
 type DeleteOptions = options.DeleteOptions
 
+// opCtx returns the context used for collection operations. While a migration
+// transaction is active the driver's session context is used so reads and
+// writes — including those against sibling databases reached via db(name) —
+// join the migration's transaction and rollback semantics. Outside of a
+// transaction it falls back to the handle's context.
+func (c *Collection) opCtx() context.Context {
+	if c.driver.sessionCtx != nil {
+		return c.driver.sessionCtx
+	}
+	return c.ctx
+}
+
 func (c *Collection) InsertMany(docs []any, options ...*InsertManyOptions) *mongo.InsertManyResult {
-	result, err := c.driver.database.Collection(c.name).InsertMany(c.ctx, docs, options...)
+	result, err := c.database.Collection(c.name).InsertMany(c.opCtx(), docs, options...)
 	if err != nil {
 		panic(err)
 	}
@@ -29,7 +42,7 @@ func (c *Collection) InsertMany(docs []any, options ...*InsertManyOptions) *mong
 }
 
 func (c *Collection) InsertOne(doc any, options ...*InsertOneOptions) *mongo.InsertOneResult {
-	result, err := c.driver.database.Collection(c.name).InsertOne(c.ctx, doc, options...)
+	result, err := c.database.Collection(c.name).InsertOne(c.opCtx(), doc, options...)
 	if err != nil {
 		panic(err)
 	}
@@ -37,13 +50,14 @@ func (c *Collection) InsertOne(doc any, options ...*InsertOneOptions) *mongo.Ins
 }
 
 func (c *Collection) Find(filter any, options ...*FindOptions) []map[string]any {
-	cur, err := c.driver.database.Collection(c.name).Find(c.ctx, filter, options...)
+	ctx := c.opCtx()
+	cur, err := c.database.Collection(c.name).Find(ctx, filter, options...)
 	if err != nil {
 		panic(err)
 	}
 
 	var results []map[string]any
-	if err := cur.All(c.ctx, &results); err != nil {
+	if err := cur.All(ctx, &results); err != nil {
 		panic(err)
 	}
 
@@ -52,7 +66,7 @@ func (c *Collection) Find(filter any, options ...*FindOptions) []map[string]any 
 
 func (c *Collection) FindOne(filter any, options ...*FindOneOptions) map[string]any {
 	var result map[string]any
-	err := c.driver.database.Collection(c.name).FindOne(c.ctx, filter, options...).Decode(&result)
+	err := c.database.Collection(c.name).FindOne(c.opCtx(), filter, options...).Decode(&result)
 	if err != nil {
 		panic(err)
 	}
@@ -60,7 +74,7 @@ func (c *Collection) FindOne(filter any, options ...*FindOneOptions) map[string]
 }
 
 func (c *Collection) UpdateMany(filter any, update any, options ...*UpdateOptions) *mongo.UpdateResult {
-	result, err := c.driver.database.Collection(c.name).UpdateMany(c.ctx, filter, update, options...)
+	result, err := c.database.Collection(c.name).UpdateMany(c.opCtx(), filter, update, options...)
 	if err != nil {
 		panic(err)
 	}
@@ -68,7 +82,7 @@ func (c *Collection) UpdateMany(filter any, update any, options ...*UpdateOption
 }
 
 func (c *Collection) UpdateOne(filter any, update any, options ...*UpdateOptions) *mongo.UpdateResult {
-	result, err := c.driver.database.Collection(c.name).UpdateOne(c.ctx, filter, update, options...)
+	result, err := c.database.Collection(c.name).UpdateOne(c.opCtx(), filter, update, options...)
 	if err != nil {
 		panic(err)
 	}
@@ -76,7 +90,7 @@ func (c *Collection) UpdateOne(filter any, update any, options ...*UpdateOptions
 }
 
 func (c *Collection) DeleteMany(filter any, options ...*DeleteOptions) *mongo.DeleteResult {
-	result, err := c.driver.database.Collection(c.name).DeleteMany(c.ctx, filter, options...)
+	result, err := c.database.Collection(c.name).DeleteMany(c.opCtx(), filter, options...)
 	if err != nil {
 		panic(err)
 	}
@@ -84,7 +98,7 @@ func (c *Collection) DeleteMany(filter any, options ...*DeleteOptions) *mongo.De
 }
 
 func (c *Collection) DeleteOne(filter any, options ...*DeleteOptions) *mongo.DeleteResult {
-	result, err := c.driver.database.Collection(c.name).DeleteOne(c.ctx, filter, options...)
+	result, err := c.database.Collection(c.name).DeleteOne(c.opCtx(), filter, options...)
 	if err != nil {
 		panic(err)
 	}
