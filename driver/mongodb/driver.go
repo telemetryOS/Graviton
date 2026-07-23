@@ -168,6 +168,13 @@ func (d *Driver) MaybeIntoJSValue(ctx context.Context, jsvm *goja.Runtime, value
 	if rtData == nil {
 		return nil, false
 	}
+	// BSON binary payloads (e.g. credential key material) pass through as
+	// opaque host values: scripts can carry and re-store them, and fromJs's
+	// Export() returns the original primitive.Binary for BSON marshaling.
+	if bin, isBin := value.(primitive.Binary); isBin {
+		return jsvm.ToValue(bin), true
+	}
+
 	oid, ok := value.(primitive.ObjectID)
 	if !ok {
 		if p, isPtr := value.(*primitive.ObjectID); isPtr && p != nil {
