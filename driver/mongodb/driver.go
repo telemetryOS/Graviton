@@ -198,6 +198,11 @@ func (d *Driver) MaybeFromJSValue(ctx context.Context, jsvm *goja.Runtime, val g
 	if IsObjectId(jsvm, val, rtData.objectIdCtorVal) {
 		return ObjectIdFromJSValue(jsvm, val), true
 	}
+	// Host-wrapped BSON binary values (see MaybeIntoJSValue) export back to
+	// their original primitive.Binary for BSON marshaling.
+	if bin, ok := val.Export().(primitive.Binary); ok {
+		return bin, true
+	}
 	return nil, false
 }
 

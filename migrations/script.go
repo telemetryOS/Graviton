@@ -250,6 +250,12 @@ func (s *Script) intoJs(vr reflect.Value) goja.Value {
 }
 
 func (s *Script) fromJs(val goja.Value) any {
+	// Driver-native values first: a host-wrapped driver type (ObjectId
+	// instance, BSON binary, …) would otherwise be decomposed by the generic
+	// Object branch below, dragging its methods along as function values.
+	if goVal, ok := s.driver.MaybeFromJSValue(s.ctx, s.runtime, val); ok {
+		return goVal
+	}
 	switch {
 	case js.IsObjectFromConstructorWithGlobalName(s.runtime, val, "Array"):
 		arr := val.ToObject(s.runtime)
