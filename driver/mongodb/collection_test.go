@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -71,21 +70,19 @@ func Test_Collection_FindOne_Success(t *testing.T) {
 	}
 }
 
-func Test_Collection_FindOne_DecodeError(t *testing.T) {
+func Test_Collection_FindOne_NoMatchReturnsNil(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
 
 	handle := drv.Handle(ctx).(*MongoHandle)
 	coll := handle.Collection("test")
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("FindOne() should panic on ErrNoDocuments, but did not")
-		} else if err, ok := r.(error); ok && err != mongo.ErrNoDocuments {
-			t.Errorf("FindOne() panic = %v, want ErrNoDocuments", err)
-		}
-	}()
-
-	coll.FindOne(bson.M{"nonexistent": "value"})
+	// A miss is the normal outcome of find-before-insert patterns: JS-land
+	// must receive null, not a panic (mongo.ErrNoDocuments is not an error
+	// condition for migration scripts).
+	result := coll.FindOne(bson.M{"nonexistent": "value"})
+	if result != nil {
+		t.Errorf("FindOne() on no match = %v, want nil", result)
+	}
 }
 
 func Test_Collection_UpdateOne_Success(t *testing.T) {
