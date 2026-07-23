@@ -12,6 +12,7 @@ import (
 
 	"github.com/dop251/goja"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -157,6 +158,29 @@ func (d *Driver) Globals(ctx context.Context, runtime *goja.Runtime) map[string]
 	globals := map[string]any{}
 	globals["ObjectId"] = d.runtimeData[runtime].objectIdCtorVal
 	return globals
+}
+
+// MaybeIntoJSValue surfaces primitive.ObjectID values to migration scripts as
+// instances of the ObjectId JS class (so toHexString()/toString() work and
+// round-tripping through filters converts back via MaybeFromJSValue).
+func (d *Driver) MaybeIntoJSValue(ctx context.Context, jsvm *goja.Runtime, value any) (goja.Value, bool) {
+	rtData := d.runtimeData[jsvm]
+	if rtData == nil {
+		return nil, false
+	}
+	oid, ok := value.(primitive.ObjectID)
+	if !ok {
+		if p, isPtr := value.(*primitive.ObjectID); isPtr && p != nil {
+			oid = *p
+		} else {
+			return nil, false
+		}
+	}
+	inst, err := jsvm.New(rtData.objectIdCtorVal, jsvm.ToValue(oid.Hex()))
+	if err != nil {
+		panic(err)
+	}
+	return inst, true
 }
 
 func (d *Driver) MaybeFromJSValue(ctx context.Context, jsvm *goja.Runtime, val goja.Value) (any, bool) {

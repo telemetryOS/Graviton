@@ -25,6 +25,11 @@ type Driver interface {
 	Init(ctx context.Context, runtime *goja.Runtime)
 	Globals(ctx context.Context, runtime *goja.Runtime) map[string]any
 	MaybeFromJSValue(ctx context.Context, runtime *goja.Runtime, value goja.Value) (any, bool)
+	// MaybeIntoJSValue is the Go→JS counterpart of MaybeFromJSValue: it lets a
+	// driver surface its native types (e.g. MongoDB ObjectIDs) to migration
+	// scripts as their proper JS representation instead of the generic
+	// reflection-based conversion.
+	MaybeIntoJSValue(ctx context.Context, runtime *goja.Runtime, value any) (goja.Value, bool)
 }
 
 // FromDatabaseConfig builds the driver for conf. databases is the full set of

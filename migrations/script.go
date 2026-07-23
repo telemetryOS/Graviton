@@ -129,6 +129,14 @@ func (s *Script) intoJs(vr reflect.Value) goja.Value {
 		return gojaVal
 	}
 
+	// Driver-native types first (e.g. MongoDB ObjectIDs become ObjectId class
+	// instances rather than falling into the generic array conversion).
+	if s.driver != nil && s.runtime != nil {
+		if driverVal, ok := s.driver.MaybeIntoJSValue(s.ctx, s.runtime, intf); ok {
+			return driverVal
+		}
+	}
+
 	if gojaObj, ok := intf.(*goja.Object); ok {
 		return gojaObj
 	}
@@ -156,6 +164,11 @@ func (s *Script) intoJs(vr reflect.Value) goja.Value {
 		}
 		return arr
 	case reflect.Map:
+		// A nil map (e.g. FindOne's no-match result) is null in JS, not a
+		// truthy empty object — find-before-insert patterns depend on this.
+		if vr.IsNil() {
+			return goja.Null()
+		}
 		obj := s.runtime.NewObject()
 		for _, key := range vr.MapKeys() {
 			obj.Set(key.String(), s.intoJs(vr.MapIndex(key)))
