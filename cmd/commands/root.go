@@ -170,7 +170,14 @@ func resolveAndAssertDBNameAndMigration(conf *config.Config, cmd *cobra.Command,
 	migrationName := ""
 	switch len(args) {
 	case 1:
-		migrationName = args[0]
+		// A single argument is ambiguous: `up <migration>` (single-database
+		// projects) or `up <database>` (multi-database projects). Resolve it
+		// as a database when it names a configured one, else as a migration.
+		if conf.Database(args[0]) != nil {
+			databaseName = args[0]
+		} else {
+			migrationName = args[0]
+		}
 	case 2:
 		databaseName = args[0]
 		migrationName = args[1]
