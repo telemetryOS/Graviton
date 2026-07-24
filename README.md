@@ -33,16 +33,20 @@ Alternatively, build from source or download a binary from the [releases page](h
 
 ### Create a Configuration File
 
-Graviton requires a configuration file named `graviton.config.toml` in your project root. This file defines which databases your project uses and where migration files are located.
+Graviton requires a configuration file named `graviton.config.toml` in your project root. This file defines which databases your project uses, where the single linear migration set lives, and which database holds the migration tracking.
 
 ```toml
+migrations_db = "main"           # the [[databases]] entry that tracks applied migrations
+migrations_path = "./migrations" # one directory, one linear ordered migration set
+
 [[databases]]
 name = "main"
 kind = "postgresql"
 connection_url = "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
 database_name = "mydb"
-migrations_path = "migrations"
 ```
+
+There is **one** migration directory and **one** linear applied-migrations list for the whole project, no matter how many databases are configured. `migrations_db` must name one of the configured `[[databases]]` entries; the tracking collection/table (`graviton-migrations`) is created there. When exactly one database is configured, `migrations_db` defaults to it and can be omitted.
 
 ### Create Your First Migration
 
@@ -55,7 +59,7 @@ graviton create create-users-table
 
 ### Apply Migrations
 
-Run the up command to apply pending migrations. Migrations are executed in chronological order based on their timestamp. Each migration runs in its own transaction, ensuring that partial application is possible if a later migration fails.
+Run the up command to apply pending migrations. Migrations are executed in chronological order based on their timestamp. Each database a migration touches commits in its own transaction, and the applied-migration marker is written last (see [Migration Model](#migration-model)).
 
 ```bash
 graviton up
@@ -69,11 +73,11 @@ All migration files must export two functions: `up` for applying changes and `do
 
 ### MongoDB Migrations
 
-MongoDB migrations interact with collections using a document-oriented API. The handle provides access to collection operations like insertOne, find, updateMany, and deleteOne.
+MongoDB migrations interact with collections using a document-oriented API. The handle provides access to collection operations like insertOne, find, updateMany, and deleteOne. In a single-database project the root handle is bound directly to that database, so you can call `collection()` on it:
 
 ```typescript
-export function up(db: Handle) {
-  db.collection('users').insertOne({
+export function up(g: Handle) {
+  g.collection('users').insertOne({
     _id: new ObjectId('65b8077faddfba1bb64fa9fe'),
     name: 'Alice',
     email: 'alice@example.com',
@@ -81,46 +85,46 @@ export function up(db: Handle) {
   })
 }
 
-export function down(db: Handle) {
-  db.collection('users').deleteOne({
+export function down(g: Handle) {
+  g.collection('users').deleteOne({
     _id: new ObjectId('65b8077faddfba1bb64fa9fe')
   })
 }
 ```
 
-#### Cross-Database Access (MongoDB)
+### Selecting a Database with `use(alias)`
 
-The MongoDB handle can reach sibling databases on the **same cluster**. Both
-accessors return a database-scoped handle with the same `collection(name)`
-surface, bound to the same MongoDB client and — while a migration is running —
-the same transaction. Reads and writes against a sibling database therefore join
-the migration's transaction and roll back together with the primary database if
-the migration fails.
-
-- **`sibling(alias)` — recommended.** Resolves a configured database *alias* (the
-  `name` of a `[[databases]]` entry) to that entry's per-environment physical
-  `database_name`. Because the physical name of a shared database usually differs
-  by environment (e.g. `telemetry_v1` deployed vs `telemetry_v1_development`
-  locally), aliasing keeps migrations portable: the same migration runs in every
-  environment and Graviton substitutes the right physical name from config.
-- **`db(name)` — literal names.** Reaches a sibling database by its literal
-  physical name, bypassing config. Use it only when the target genuinely has a
-  fixed name across every environment; otherwise prefer `sibling(alias)`.
-
-This is the intended pattern for legacy → modern ETL migrations, where the
-migration reads from a legacy database and writes into the modern target
-database configured for the project:
+A migration reaches any configured database by its `[[databases]]` name with
+`use(alias)`, which returns a handle bound to that database:
 
 ```typescript
-export function up(db: Handle) {
-  // Read from the legacy database on the same cluster. `legacy` is a configured
-  // [[databases]] alias, so this resolves to the right physical database in
-  // every environment.
-  const legacyUsers = db.sibling('legacy').collection('users').find({})
+export function up(g: Handle) {
+  g.use('accounts').collection('accounts').insertOne({ name: 'Acme' })
+  g.use('devices').collection('devices').insertOne({ name: 'lobby-screen' })
+}
+```
 
-  // Transform and write into the configured target database (db.collection).
+`use(alias)` is the single, uniform way to address databases; it subsumes the
+old `db(name)` and `sibling(alias)` accessors, which have been removed.
+
+- **Single-database projects** may call `collection()` (or the SQL surface)
+  directly on the root handle — it is transparently bound to the one configured
+  database. `use(alias)` still works there too.
+- **Multi-database projects** must select a database with `use(alias)` first.
+  Calling a direct operation on the root handle errors clearly, telling you which
+  databases are configured and that `use(alias)` is required.
+- An unknown alias errors cleanly, listing the configured aliases.
+
+Writes across databases can be freely interleaved within one migration body.
+This is the pattern for legacy → modern ETL migrations — read from one database,
+write into another:
+
+```typescript
+export function up(g: Handle) {
+  const legacyUsers = g.use('legacy').collection('users').find({})
+
   for (const legacyUser of legacyUsers) {
-    db.collection('users').insertOne({
+    g.use('accounts').collection('users').insertOne({
       _id: legacyUser._id,
       name: legacyUser.full_name,
       email: legacyUser.email_address,
@@ -129,28 +133,17 @@ export function up(db: Handle) {
   }
 }
 
-export function down(db: Handle) {
-  db.collection('users').deleteMany({ migratedAt: { $exists: true } })
+export function down(g: Handle) {
+  g.use('accounts').collection('users').deleteMany({ migratedAt: { $exists: true } })
 }
 ```
 
-Caveats:
-
-- **Same cluster only.** `sibling(alias)` and `db(name)` share the migration's
-  MongoDB client, so they can only reach databases hosted on the cluster named by
-  the migration's `connection_url`. `sibling(alias)` errors cleanly if the alias
-  is not configured, is not a `mongodb` database, or resolves to a different
-  connection/cluster. To move data between separate clusters, export/import out of
-  band rather than reaching across.
-- **Transaction scope.** Cross-database transactions require a single MongoDB
-  cluster (a replica set, which Graviton already requires). All databases you
-  touch in one migration share one transaction and commit or roll back as a
-  unit.
-- **The configured `database_name` is still the migration's home.**
-  `sibling(alias)`/`db(name)` are for reaching *other* databases;
-  `db.collection(...)` continues to target the database configured for the
-  project. Applied-migration bookkeeping is always recorded in the configured
-  database.
+Databases no longer need to be on the same cluster, and kinds can be mixed: each
+database you touch transacts independently in its own driver (see
+[Migration Model](#migration-model)). A MongoDB database and a PostgreSQL
+database can be addressed from the same migration; each `use(alias)` handle
+speaks its own kind's surface (`collection()` for MongoDB, `exec()`/`query()`/
+`queryOne()` for SQL).
 
 ### SQL Migrations
 
@@ -199,28 +192,39 @@ db.exec(sql`SELECT * FROM users WHERE name = ${name}`)
 
 ### Configuration File Format
 
-Graviton uses TOML configuration files. The configuration can define one or more databases, making it possible to manage multiple database systems within a single project.
+Graviton uses TOML configuration files. Two top-level keys describe the migration set, and one or more `[[databases]]` tables describe the databases.
 
 ```toml
+migrations_db = "main"
+migrations_path = "./migrations"
+
 [[databases]]
 name = "main"
 kind = "postgresql"
 connection_url = "postgres://localhost:5432/mydb?sslmode=disable"
 database_name = "mydb"
-migrations_path = "migrations"
 ```
 
-### Database Configuration
+`${VAR}` references anywhere in the file are substituted from the environment
+before parsing, keeping connection strings portable across environments.
 
-Each database configuration requires a name for identification, a kind specifying the database type, a connection URL with credentials and connection parameters, the database name to use, and a path to the migration files.
+### Top-Level Configuration
 
 Configuration Field | Description
 --------------------|------------
-`name` | Identifier used in CLI commands to target this database
+`migrations_db` | The `[[databases]]` `name` whose `graviton-migrations` collection/table holds the single linear applied-migrations list. Must reference a configured database. Defaults to the sole database when exactly one is configured.
+`migrations_path` | Path to the one migration directory, relative to the config file. Defaults to `./migrations`.
+
+### Database Configuration
+
+Each `[[databases]]` entry requires a name for identification, a kind specifying the database type, a connection URL, and the database name to use. Migration files are no longer configured per database — there is one shared `migrations_path`.
+
+Configuration Field | Description
+--------------------|------------
+`name` | Alias used by `use(alias)` and by `migrations_db`
 `kind` | Database type: `mongodb`, `postgresql`, `mysql`, or `sqlite`
 `connection_url` | Database connection string (format varies by database)
 `database_name` | Name of the database to use
-`migrations_path` | Path to migration files relative to config file
 
 ### Connection URLs
 
@@ -242,30 +246,77 @@ connection_url = "mongodb://user:pass@host:port"
 
 ### Multi-Database Projects
 
-Graviton supports managing multiple databases in a single project. This is useful for applications that use different databases for different purposes, such as PostgreSQL for relational data and MongoDB for document storage.
+Graviton manages multiple databases from one linear migration set. This is useful for applications that use different databases for different purposes, such as PostgreSQL for relational data and MongoDB for document storage, or for coordinated changes across several service databases.
 
 ```toml
+migrations_db = "postgres-db"
+migrations_path = "./migrations"
+
 [[databases]]
 name = "postgres-db"
 kind = "postgresql"
 connection_url = "postgres://localhost:5432/main"
 database_name = "main"
-migrations_path = "migrations/postgres"
 
 [[databases]]
 name = "mongo-db"
 kind = "mongodb"
 connection_url = "mongodb://localhost:27017"
 database_name = "analytics"
-migrations_path = "migrations/mongo"
 ```
 
-When multiple databases are configured, you must specify which database to target in commands using the database name parameter.
+There is no per-database command argument. Commands operate on the whole
+project, and migrations pick databases with `use(alias)`:
 
 ```bash
-graviton up postgres-db
-graviton status mongo-db
+graviton up
+graviton status
 ```
+
+A migration can touch both databases; each commits in its own transaction and
+the marker is written last to `migrations_db`.
+
+## Migration Model
+
+Graviton uses a single linear migration set for the whole system: one migration
+directory, one ordered list, and one applied-migrations record in
+`migrations_db`. Migrations are ordered by their filename timestamp exactly as
+before — there is just one directory now.
+
+### Per-Handle Transactions and Marker-Last
+
+Each database a migration touches gets its **own** session and transaction,
+started lazily on its first operation and interleavable freely within the
+migration body. When the body succeeds:
+
+1. Every open data-database transaction commits, each independently.
+2. **Then** the applied-migration marker is written to `migrations_db`, last, in
+   its own transaction.
+
+If a data commit fails, still-open transactions roll back, already-committed
+databases stay committed, and the marker is **not** written. If the body errors
+or panics, all open transactions roll back and no marker is written.
+
+### Recovery Model: Idempotency + Re-run
+
+Cross-database atomicity is **per handle, not joint** — this is deliberate.
+Graviton does not attempt two-phase commit across heterogeneous databases.
+Because the marker is written strictly last and in its own transaction, a process
+that dies after some databases commit but before the marker is written leaves the
+migration **unmarked**, so it re-runs on the next `up`.
+
+The recovery model is therefore: **write idempotent/convergent migrations and
+re-run them.** A migration that re-runs after a partial commit must converge to
+the intended end state (e.g. use upserts, guard inserts with existence checks,
+and make deletes match-by-predicate). Do not rely on joint atomicity across
+databases.
+
+### Mixing Kinds
+
+Databases no longer need to share a cluster, and their kinds can differ. Each
+`use(alias)` handle transacts within its own kind (a MongoDB transaction for a
+`mongodb` entry, a SQL transaction for a SQL entry). The marker is written in
+whatever kind `migrations_db` is.
 
 ## Commands
 
@@ -275,32 +326,28 @@ The up command applies pending migrations in chronological order. Without argume
 
 ```bash
 graviton up                      # Apply all pending migrations
-graviton up create-users         # Apply up to specific migration
-graviton up mydb                 # Apply for specific database
-graviton up mydb create-users    # Apply to migration on specific database
+graviton up create-users         # Apply up to and including a specific migration
 ```
 
-Each migration executes in its own transaction. If a migration fails, previous migrations remain applied and only the failed migration is rolled back.
+Migrations apply one at a time in linear order. If a migration fails, previously applied migrations remain applied; the failed migration's data transactions roll back and its marker is not written, so it re-runs next time (see [Migration Model](#migration-model)).
 
 ### down
 
 The down command rolls back applied migrations in reverse chronological order. It requires a target migration name and will roll back migrations down to and including that migration.
 
 ```bash
-graviton down create-users       # Rollback to and including migration
+graviton down create-users       # Rollback to and including a migration
 graviton down -                  # Rollback all migrations
-graviton down mydb create-users  # Rollback on specific database
 ```
 
 Use the special `-` target to roll back all migrations.
 
 ### status
 
-The status command displays the current state of migrations for a database. It shows which migrations have been applied and which are pending, helping you understand the current schema version.
+The status command displays the current state of the linear migration set. It shows which migrations have been applied and which are pending, helping you understand the current schema version.
 
 ```bash
-graviton status         # Show status for default database
-graviton status mydb    # Show status for specific database
+graviton status         # Show applied and pending migrations
 ```
 
 ### set-head
@@ -351,17 +398,16 @@ interface Collection {
   deleteMany(filter: any): void
 }
 
-interface Database {
+// A handle bound to a single configured database.
+interface DbHandle {
   collection(name: string): Collection
 }
 
-interface Handle {
-  collection(name: string): Collection
-  // Access a sibling database on the same cluster by its configured alias,
-  // resolved to the per-environment physical name (see Cross-Database Access).
-  sibling(alias: string): Database
-  // Access a sibling database on the same cluster by literal physical name.
-  db(name: string): Database
+interface Handle extends DbHandle {
+  // Select any configured database by its [[databases]] name. Returns a new
+  // bound handle instance per call. In a single-database project the root
+  // handle is also bound directly, so collection() works without use().
+  use(alias: string): DbHandle
 }
 
 declare class ObjectId {
@@ -389,10 +435,16 @@ interface SQLResult {
   lastInsertId: number  // MySQL/SQLite only (0 for PostgreSQL)
 }
 
-interface Handle {
+interface SqlDbHandle {
   exec(query: SQLQuery): SQLResult
   query<T = any>(query: SQLQuery): T[]
   queryOne<T = any>(query: SQLQuery): T | null
+}
+
+interface Handle extends SqlDbHandle {
+  // Select any configured database by its [[databases]] name. In a single-SQL-
+  // database project the root handle exposes exec/query/queryOne directly.
+  use(alias: string): SqlDbHandle
 }
 
 declare function sql(
@@ -471,12 +523,12 @@ This ensures migrations can be run on fresh database instances and new environme
 
 ### Transaction Behavior
 
-Each migration runs in its own transaction. If migration 5 fails, migrations 1-4 remain committed to the database. This allows for incremental progress and makes it easier to fix issues without losing work.
-
-For MongoDB, every collection operation a migration performs — including
-cross-database operations reached through `db(name)` — runs inside that
-migration's transaction, so a failure rolls the whole migration back atomically.
-Cross-database transactions are limited to databases on a single cluster.
+Transactions are **per handle**, not joint across databases — see
+[Migration Model](#migration-model) for the full contract. Within one migration,
+each database you touch gets its own transaction, and on success they commit
+independently before the applied marker is written. Design migrations to be
+idempotent/convergent so that a re-run after a partial commit converges to the
+intended state.
 
 ### SQL Injection Prevention
 
@@ -494,6 +546,21 @@ db.exec(sql`SELECT * FROM users WHERE name = ${name}`)
 ```
 
 The sql tag function automatically parameterizes all template literal values, ensuring they are safely escaped and bound to the query.
+
+## Examples
+
+The `example/` directory contains ready-to-read projects in the current
+(v2) shape:
+
+- `example/mongodb-migrations`, `example/postgresql-migrations`,
+  `example/sqlite-migrations` — single-database projects.
+- `example/multi-database-migrations` — two MongoDB databases addressed with
+  `use(alias)` from one linear migration set.
+
+> **Note:** The `neo-accounts-service/` directory at the repo root is
+> **pre-v2** prior-art kept for reference. Its config still uses the old
+> per-database `migrations_path` shape and predates `migrations_db`/`use()`; do
+> not treat it as a template for new projects.
 
 ## Development
 

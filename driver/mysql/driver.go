@@ -29,9 +29,12 @@ var deleteAllMigrationsSQL string
 //go:embed sql/insert_migration.sql
 var insertMigrationSQL string
 
-type contextKey string
-
-const txContextKey contextKey = "mysql_tx"
+// sqlExecutor is satisfied by both *sql.DB and *sql.Tx, letting operations run
+// either directly or inside this driver's open transaction.
+type sqlExecutor interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
 
 type driverRuntimeData struct {
 	sqlQueryCtorVal   goja.Value
@@ -42,6 +45,9 @@ type Driver struct {
 	config      *config.DatabaseConfig
 	db          *sql.DB
 	runtimeData map[*goja.Runtime]*driverRuntimeData
+
+	// tx is the single transaction that may be open on this driver at a time.
+	tx *sql.Tx
 }
 
 func New(conf *config.DatabaseConfig) *Driver {
@@ -88,7 +94,7 @@ func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*migration
 		return nil, err
 	}
 
-	rows, err := d.db.QueryContext(ctx, query)
+	rows, err := d.executor().QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -111,15 +117,7 @@ func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*migration
 }
 
 func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []*migrationsmeta.MigrationMetadata) error {
-	var execer interface {
-		ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	}
-
-	if tx := d.getTxFromContext(ctx); tx != nil {
-		execer = tx
-	} else {
-		execer = d.db
-	}
+	execer := d.executor()
 
 	deleteSQL, err := d.renderSQL(deleteAllMigrationsSQL)
 	if err != nil {
@@ -148,34 +146,56 @@ func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMet
 	return nil
 }
 
-func (d *Driver) WithTransaction(ctx context.Context, fn func(context.Context) error) (returnErr error) {
+// BeginTx opens a transaction if none is open. It is idempotent.
+func (d *Driver) BeginTx(ctx context.Context) error {
+	_, err := d.ensureTx(ctx)
+	return err
+}
+
+// ensureTx returns this driver's open transaction, beginning one if none is
+// open yet. It backs both BeginTx and the JS-facing handle operations.
+func (d *Driver) ensureTx(ctx context.Context) (*sql.Tx, error) {
+	if d.tx != nil {
+		return d.tx, nil
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	d.tx = tx
+	return tx, nil
+}
 
-	defer func() {
-		if r := recover(); r != nil {
-			if rbErr := tx.Rollback(); rbErr != nil {
-				fmt.Printf("Warning: failed to rollback transaction: %v\n", rbErr)
-			}
-			if e, ok := r.(error); ok {
-				returnErr = e
-			} else {
-				returnErr = fmt.Errorf("panic in transaction: %v", r)
-			}
-		} else if returnErr != nil {
-			if rbErr := tx.Rollback(); rbErr != nil {
-				fmt.Printf("Warning: failed to rollback transaction: %v\n", rbErr)
-			}
-		} else {
-			returnErr = tx.Commit()
-		}
-	}()
+func (d *Driver) CommitTx(ctx context.Context) error {
+	if d.tx == nil {
+		return nil
+	}
+	err := d.tx.Commit()
+	d.tx = nil
+	return err
+}
 
-	txCtx := context.WithValue(ctx, txContextKey, tx)
+func (d *Driver) RollbackTx(ctx context.Context) error {
+	if d.tx == nil {
+		return nil
+	}
+	err := d.tx.Rollback()
+	d.tx = nil
+	return err
+}
 
-	return fn(txCtx)
+func (d *Driver) HasOpenTx() bool {
+	return d.tx != nil
+}
+
+// executor returns the open transaction when one is active, else the raw
+// connection pool. Tracking reads/writes use it without implicitly beginning a
+// transaction; the JS-facing handle begins one lazily via ensureTx.
+func (d *Driver) executor() sqlExecutor {
+	if d.tx != nil {
+		return d.tx
+	}
+	return d.db
 }
 
 func (d *Driver) Handle(ctx context.Context) any {
@@ -206,13 +226,6 @@ func (d *Driver) MaybeFromJSValue(ctx context.Context, runtime *goja.Runtime, va
 		return SQLQueryFromJSValue(runtime, value), true
 	}
 	return nil, false
-}
-
-func (d *Driver) getTxFromContext(ctx context.Context) *sql.Tx {
-	if tx, ok := ctx.Value(txContextKey).(*sql.Tx); ok {
-		return tx
-	}
-	return nil
 }
 
 func (d *Driver) renderSQL(sqlTemplate string) (string, error) {

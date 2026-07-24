@@ -1,50 +1,29 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
-	"github.com/telemetryos/graviton/driver"
 	"github.com/telemetryos/graviton/migrations"
 
 	"github.com/spf13/cobra"
 )
 
 var statusCmd = &cobra.Command{
-	Use:   "status [database]",
+	Use:   "status",
 	Short: "gets the migration status",
 	Long:  "Shows what migrations have been applied and which ones have not",
-	Args:  cobra.MaximumNArgs(1),
-
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) == 0 {
-			conf := assertConfig()
-			singularDatabase := conf.GetSingularDatabase()
-			if singularDatabase == "" {
-				databaseNames := databaseNamesWithPrefix(conf, toComplete)
-				return databaseNames, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
-			}
-		}
-		return []string{}, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
-	},
+	Args:  cobra.NoArgs,
 
 	Run: func(cmd *cobra.Command, args []string) {
 		conf := assertConfig()
-		databaseName := resolveAndAssertDBName(conf, cmd, args)
-		databaseConf := conf.Database(databaseName)
 
-		ctx := context.Background()
+		run := connectRun(conf)
+		defer run.Disconnect()
 
-		fmt.Println("Migration status for database `" + databaseName + "`")
+		fmt.Println("Migration status")
 
-		drv := driver.FromDatabaseConfig(databaseConf, conf.Databases)
-		if err := drv.Connect(ctx); err != nil {
-			panic(err)
-		}
-		defer drv.Disconnect(ctx)
-
-		pendingMigrations, err := migrations.GetPending(ctx, conf.ProjectPath, databaseConf, drv)
+		pendingMigrations, err := run.GetPending()
 		if err != nil {
 			if err, ok := err.(*migrations.BuildScriptError); ok {
 				err.Print()
@@ -57,7 +36,7 @@ var statusCmd = &cobra.Command{
 			pendingMigrationNames = append(pendingMigrationNames, "   - "+pendingMigration.Name())
 		}
 
-		appliedMigrations, err := migrations.GetApplied(ctx, drv)
+		appliedMigrations, err := run.GetApplied()
 		if err != nil {
 			panic(err)
 		}

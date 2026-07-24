@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,9 @@ import (
 )
 
 const CONFIG_NAME = "graviton.config.toml"
+
+// DefaultMigrationsPath is used when migrations_path is omitted from the config.
+const DefaultMigrationsPath = "./migrations"
 
 type DatabaseKind string
 
@@ -22,15 +26,23 @@ const (
 
 type Config struct {
 	ProjectPath string
-	Databases   []*DatabaseConfig `toml:"databases"`
+
+	// MigrationsDb names the [[databases]] entry that holds the linear
+	// applied-migrations tracking collection/table.
+	MigrationsDb string `toml:"migrations_db"`
+
+	// MigrationsPath is the single directory containing the one linear ordered
+	// migration set for the whole project.
+	MigrationsPath string `toml:"migrations_path"`
+
+	Databases []*DatabaseConfig `toml:"databases"`
 }
 
 type DatabaseConfig struct {
-	Name           string       `toml:"name"`
-	Kind           DatabaseKind `toml:"kind"`
-	ConnectionUrl  string       `toml:"connection_url"`
-	DatabaseName   string       `toml:"database_name"`
-	MigrationsPath string       `toml:"migrations_path"`
+	Name          string       `toml:"name"`
+	Kind          DatabaseKind `toml:"kind"`
+	ConnectionUrl string       `toml:"connection_url"`
+	DatabaseName  string       `toml:"database_name"`
 }
 
 // GetFilePath returns the path to Graviton's config within the current project
@@ -102,14 +114,55 @@ func Load() (*Config, error) {
 
 	config.ProjectPath = filepath.Dir(configPath)
 
+	if config.MigrationsPath == "" {
+		config.MigrationsPath = DefaultMigrationsPath
+	}
+
+	// With exactly one database configured there is no ambiguity, so
+	// migrations_db defaults to it and need not be set explicitly.
+	if config.MigrationsDb == "" && len(config.Databases) == 1 {
+		config.MigrationsDb = config.Databases[0].Name
+	}
+
 	return &config, nil
 }
 
-func (c *Config) GetSingularDatabase() string {
-	if len(c.Databases) == 1 {
-		return c.Databases[0].Name
+// Validate checks that the config is coherent for the single-linear-set model:
+// at least one database must be configured, and migrations_db must name a
+// configured [[databases]] entry.
+func (c *Config) Validate() error {
+	if len(c.Databases) == 0 {
+		return fmt.Errorf("no databases are configured in %s", CONFIG_NAME)
 	}
-	return ""
+	if c.MigrationsDb == "" {
+		return fmt.Errorf(
+			"migrations_db is not set; it must name one of the configured databases: %s",
+			strings.Join(c.DatabaseNames(), ", "),
+		)
+	}
+	if c.Database(c.MigrationsDb) == nil {
+		return fmt.Errorf(
+			"migrations_db %q does not name a configured database; configured databases: %s",
+			c.MigrationsDb, strings.Join(c.DatabaseNames(), ", "),
+		)
+	}
+	return nil
+}
+
+// DatabaseNames returns the aliases of every configured database in config
+// order.
+func (c *Config) DatabaseNames() []string {
+	names := make([]string, 0, len(c.Databases))
+	for _, database := range c.Databases {
+		names = append(names, database.Name)
+	}
+	return names
+}
+
+// MigrationsDatabase returns the configured entry that holds migration
+// tracking.
+func (c *Config) MigrationsDatabase() *DatabaseConfig {
+	return c.Database(c.MigrationsDb)
 }
 
 func (c *Config) Database(name string) *DatabaseConfig {

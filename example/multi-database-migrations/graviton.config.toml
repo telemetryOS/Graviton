@@ -1,0 +1,22 @@
+# Multi-database example.
+#
+# Two databases share one linear migration set. Migrations select a database
+# with use(alias); the applied-migration tracking lives in migrations_db. Each
+# database a migration touches gets its own transaction, committed independently,
+# and the tracking marker is written last (see the README for the recovery
+# model).
+
+migrations_db = "accounts"
+migrations_path = "./migrations"
+
+[[databases]]
+name = "accounts"
+kind = "mongodb"
+connection_url = "mongodb://localhost:27017"
+database_name = "neo-accounts-service"
+
+[[databases]]
+name = "devices"
+kind = "mongodb"
+connection_url = "mongodb://localhost:27017"
+database_name = "neo-devices-service"

@@ -2,7 +2,6 @@ package postgresql
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -92,19 +91,22 @@ func Test_Driver_Connect(t *testing.T) {
 	}
 }
 
-func Test_Driver_WithTransaction_Success(t *testing.T) {
+func Test_Driver_Commit(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
 
 	drv.db.ExecContext(ctx, "CREATE TABLE test (value TEXT)")
 
-	err := drv.WithTransaction(ctx, func(txCtx context.Context) error {
-		tx := drv.getTxFromContext(txCtx)
-		_, err := tx.ExecContext(txCtx, "INSERT INTO test (value) VALUES ($1)", "test")
-		return err
-	})
-
-	if err != nil {
-		t.Fatalf("WithTransaction() error = %v, want nil", err)
+	if err := drv.BeginTx(ctx); err != nil {
+		t.Fatalf("BeginTx() error = %v", err)
+	}
+	if _, err := drv.tx.ExecContext(ctx, "INSERT INTO test (value) VALUES ($1)", "test"); err != nil {
+		t.Fatalf("insert error = %v", err)
+	}
+	if err := drv.CommitTx(ctx); err != nil {
+		t.Fatalf("CommitTx() error = %v", err)
+	}
+	if drv.HasOpenTx() {
+		t.Error("HasOpenTx() = true after commit, want false")
 	}
 
 	var count int
@@ -114,55 +116,52 @@ func Test_Driver_WithTransaction_Success(t *testing.T) {
 	}
 }
 
-func Test_Driver_WithTransaction_ErrorReturned(t *testing.T) {
+func Test_Driver_Rollback(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
 
 	drv.db.ExecContext(ctx, "CREATE TABLE test (value TEXT)")
 
-	expectedErr := errors.New("test error")
-
-	err := drv.WithTransaction(ctx, func(txCtx context.Context) error {
-		tx := drv.getTxFromContext(txCtx)
-		tx.ExecContext(txCtx, "INSERT INTO test (value) VALUES ($1)", "test")
-		return expectedErr
-	})
-
-	if err == nil {
-		t.Fatal("WithTransaction() error = nil, want error")
+	if err := drv.BeginTx(ctx); err != nil {
+		t.Fatalf("BeginTx() error = %v", err)
 	}
-	if !errors.Is(err, expectedErr) && err.Error() != expectedErr.Error() {
-		t.Errorf("WithTransaction() error = %v, want %v", err, expectedErr)
+	drv.tx.ExecContext(ctx, "INSERT INTO test (value) VALUES ($1)", "test")
+	if err := drv.RollbackTx(ctx); err != nil {
+		t.Fatalf("RollbackTx() error = %v", err)
+	}
+	if drv.HasOpenTx() {
+		t.Error("HasOpenTx() = true after rollback, want false")
 	}
 
 	var count int
 	drv.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM test").Scan(&count)
 	if count != 0 {
-		t.Errorf("COUNT(*) = %d, want 0 (transaction should rollback)", count)
+		t.Errorf("COUNT(*) = %d, want 0 (transaction should roll back)", count)
 	}
 }
 
-func Test_Driver_WithTransaction_PanicRecovered(t *testing.T) {
+func Test_Driver_Handle_LazilyBeginsTransaction(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
 
 	drv.db.ExecContext(ctx, "CREATE TABLE test (value TEXT)")
 
-	err := drv.WithTransaction(ctx, func(txCtx context.Context) error {
-		tx := drv.getTxFromContext(txCtx)
-		tx.ExecContext(txCtx, "INSERT INTO test (value) VALUES ($1)", "test")
-		panic(errors.New("panic error"))
-	})
-
-	if err == nil {
-		t.Fatal("WithTransaction() error = nil, want error from recovered panic")
+	handle := drv.Handle(ctx).(*Handle)
+	if drv.HasOpenTx() {
+		t.Fatal("HasOpenTx() = true before first operation, want false")
 	}
-	if err.Error() != "panic error" {
-		t.Errorf("WithTransaction() error = %v, want 'panic error'", err)
+
+	handle.Exec(&SQLQuery{Query: "INSERT INTO test (value) VALUES ($1)", Params: []any{"test"}})
+	if !drv.HasOpenTx() {
+		t.Fatal("handle operation did not lazily begin a transaction")
+	}
+
+	if err := drv.RollbackTx(ctx); err != nil {
+		t.Fatalf("RollbackTx() error = %v", err)
 	}
 
 	var count int
 	drv.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM test").Scan(&count)
 	if count != 0 {
-		t.Errorf("COUNT(*) = %d, want 0 (transaction should rollback after panic)", count)
+		t.Errorf("COUNT(*) = %d, want 0 (uncommitted handle write should roll back)", count)
 	}
 }
 

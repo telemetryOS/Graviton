@@ -1,13 +1,14 @@
-# Here is an example Graviton configuration file.
-# Currently just MongoDB is supported. But other
-# databases will be supported future. If more than
-# one database is added to a config you will need
-# to specify which database to use when running
-# commands.
+# Example Graviton configuration (v2).
+#
+# There is one linear, ordered migration set for the whole project, in a single
+# migrations directory. migrations_db names the [[databases]] entry where the
+# applied-migration tracking lives.
+
+migrations_db = "example"
+migrations_path = "./migrations"
 
 [[databases]]
 name = "example"
 kind = "mongodb"
 connection_url = "mongodb://localhost:27017"
 database_name = "test"
-migrations_path = "migrations"

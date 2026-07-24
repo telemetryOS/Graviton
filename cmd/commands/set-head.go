@@ -1,68 +1,48 @@
 package commands
 
 import (
-	"context"
 	"time"
 
-	"github.com/telemetryos/graviton/driver"
-	"github.com/telemetryos/graviton/migrations"
 	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
 
 	"github.com/spf13/cobra"
 )
 
 var setHeadCmd = &cobra.Command{
-	Use:   "set-head [database] <migration>",
+	Use:   "set-head <migration>",
 	Short: "sets the head migration",
 	Long:  "Allows setting which migrations have been applied without running them by selecting a new head",
-	Args:  cobra.RangeArgs(1, 2),
+	Args:  cobra.ExactArgs(1),
 
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		conf := assertConfig()
-		singularDatabase := conf.GetSingularDatabase()
-		switch len(args) {
-		case 0:
-			if singularDatabase != "" {
-				migrationNames := allMigrationNamesWithPrefix(conf, singularDatabase, toComplete)
-				return append(migrationNames, "-"), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
-			}
-			databaseNames := databaseNamesWithPrefix(conf, toComplete)
-			return databaseNames, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
-		case 1:
-			if singularDatabase == "" {
-				migrationNames := allMigrationNamesWithPrefix(conf, args[0], toComplete)
-				return append(migrationNames, "-"), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
-			}
+		if len(args) == 0 {
+			conf := assertConfig()
+			migrationNames := allMigrationNamesWithPrefix(conf, toComplete)
+			return append(migrationNames, "-"), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
 		}
 		return []string{}, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
 	},
 
 	Run: func(cmd *cobra.Command, args []string) {
 		conf := assertConfig()
-		databaseName, migrationName := resolveAndAssertDBNameAndMigration(conf, cmd, args)
-		databaseConf := conf.Database(databaseName)
+		migrationName := args[0]
 
-		ctx := context.Background()
-
-		drv := driver.FromDatabaseConfig(databaseConf, conf.Databases)
-		if err := drv.Connect(ctx); err != nil {
-			panic(err)
-		}
-		defer drv.Disconnect(ctx)
+		run := connectRun(conf)
+		defer run.Disconnect()
 
 		if migrationName == "-" {
-			if err := drv.SetAppliedMigrationsMetadata(ctx, []*migrationsmeta.MigrationMetadata{}); err != nil {
+			if err := run.SetHead([]*migrationsmeta.MigrationMetadata{}); err != nil {
 				panic(err)
 			}
 			return
 		}
 
-		pendingMigrations, err := migrations.GetPending(ctx, conf.ProjectPath, databaseConf, drv)
+		pendingMigrations, err := run.GetPending()
 		if err != nil {
 			panic(err)
 		}
 
-		appliedMigrations, err := migrations.GetApplied(ctx, drv)
+		appliedMigrations, err := run.GetApplied()
 		if err != nil {
 			panic(err)
 		}
@@ -81,7 +61,7 @@ var setHeadCmd = &cobra.Command{
 			}
 		}
 
-		if err := drv.SetAppliedMigrationsMetadata(ctx, migrationsMetadata); err != nil {
+		if err := run.SetHead(migrationsMetadata); err != nil {
 			panic(err)
 		}
 	},

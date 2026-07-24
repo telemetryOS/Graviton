@@ -22,16 +22,16 @@ type FindOneOptions = options.FindOneOptions
 type UpdateOptions = options.UpdateOptions
 type DeleteOptions = options.DeleteOptions
 
-// opCtx returns the context used for collection operations. While a migration
-// transaction is active the driver's session context is used so reads and
-// writes — including those against sibling databases reached via db(name) —
-// join the migration's transaction and rollback semantics. Outside of a
-// transaction it falls back to the handle's context.
+// opCtx returns the context used for collection operations. The first operation
+// against this driver in a migration lazily begins a transaction; every
+// subsequent operation — including those against other databases reached via
+// use(alias) — joins that driver's own transaction and rollback semantics.
 func (c *Collection) opCtx() context.Context {
-	if c.driver.sessionCtx != nil {
-		return c.driver.sessionCtx
+	sessCtx, err := c.driver.ensureTx(c.ctx)
+	if err != nil {
+		panic(err)
 	}
-	return c.ctx
+	return sessCtx
 }
 
 func (c *Collection) InsertMany(docs []any, options ...*InsertManyOptions) *mongo.InsertManyResult {

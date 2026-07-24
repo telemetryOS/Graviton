@@ -2,7 +2,6 @@ package mongodb
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -27,7 +26,7 @@ func setupTestDriver(t *testing.T) (*Driver, context.Context) {
 		DatabaseName:  testDatabaseName,
 	}
 
-	drv := New(conf, []*config.DatabaseConfig{conf, testSiblingDatabaseConfig()})
+	drv := New(conf)
 	ctx := context.Background()
 
 	if err := drv.Connect(ctx); err != nil {
@@ -35,6 +34,10 @@ func setupTestDriver(t *testing.T) (*Driver, context.Context) {
 	}
 
 	t.Cleanup(func() {
+		// A handle operation lazily opens a transaction the collection tests
+		// never commit; abort it before cleaning so the collection drops don't
+		// contend with a lingering transaction.
+		drv.RollbackTx(ctx)
 		cleanDatabase(t, drv, ctx)
 		drv.Disconnect(ctx)
 	})
@@ -65,7 +68,7 @@ func Test_Driver_Connect(t *testing.T) {
 		DatabaseName:  testDatabaseName,
 	}
 
-	drv := New(conf, []*config.DatabaseConfig{conf})
+	drv := New(conf)
 	ctx := context.Background()
 
 	err := drv.Connect(ctx)
@@ -82,21 +85,25 @@ func Test_Driver_Connect(t *testing.T) {
 	}
 }
 
-func Test_Driver_WithTransaction_Success(t *testing.T) {
+func Test_Driver_Commit(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
 
-	testColl := drv.database.Collection("test")
+	handle := drv.Handle(ctx).(*MongoHandle)
+	coll := handle.Collection("test")
 
-	err := drv.WithTransaction(ctx, func(sessCtx context.Context) error {
-		_, err := testColl.InsertOne(sessCtx, bson.M{"value": "test"})
-		return err
-	})
-
-	if err != nil {
-		t.Fatalf("WithTransaction() error = %v, want nil", err)
+	// The first collection operation lazily opens the driver's transaction.
+	coll.InsertOne(bson.M{"value": "test"})
+	if !drv.HasOpenTx() {
+		t.Fatal("handle operation did not lazily begin a transaction")
+	}
+	if err := drv.CommitTx(ctx); err != nil {
+		t.Fatalf("CommitTx() error = %v", err)
+	}
+	if drv.HasOpenTx() {
+		t.Error("HasOpenTx() = true after commit, want false")
 	}
 
-	count, err := testColl.CountDocuments(ctx, bson.M{})
+	count, err := drv.database.Collection("test").CountDocuments(ctx, bson.M{})
 	if err != nil {
 		t.Fatalf("CountDocuments() error = %v", err)
 	}
@@ -105,91 +112,51 @@ func Test_Driver_WithTransaction_Success(t *testing.T) {
 	}
 }
 
-func Test_Driver_WithTransaction_ErrorReturned(t *testing.T) {
+func Test_Driver_Rollback(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
 
-	testColl := drv.database.Collection("test")
-	expectedErr := errors.New("test error")
+	handle := drv.Handle(ctx).(*MongoHandle)
+	coll := handle.Collection("test")
 
-	err := drv.WithTransaction(ctx, func(sessCtx context.Context) error {
-		_, err := testColl.InsertOne(sessCtx, bson.M{"value": "test"})
-		if err != nil {
-			return err
-		}
-		return expectedErr
-	})
-
-	if err == nil {
-		t.Fatal("WithTransaction() error = nil, want error")
+	coll.InsertOne(bson.M{"value": "test"})
+	if err := drv.RollbackTx(ctx); err != nil {
+		t.Fatalf("RollbackTx() error = %v", err)
 	}
-	if !errors.Is(err, expectedErr) && err.Error() != expectedErr.Error() {
-		t.Errorf("WithTransaction() error = %v, want %v", err, expectedErr)
+	if drv.HasOpenTx() {
+		t.Error("HasOpenTx() = true after rollback, want false")
 	}
 
-	count, err := testColl.CountDocuments(ctx, bson.M{})
+	count, err := drv.database.Collection("test").CountDocuments(ctx, bson.M{})
 	if err != nil {
 		t.Fatalf("CountDocuments() error = %v", err)
 	}
 	if count != 0 {
-		t.Errorf("CountDocuments() = %d, want 0 (transaction should rollback)", count)
+		t.Errorf("CountDocuments() = %d, want 0 (transaction should roll back)", count)
 	}
 }
 
-func Test_Driver_WithTransaction_PanicRecovered(t *testing.T) {
+func Test_Driver_SessionReusedAcrossTransactions(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
 
-	testColl := drv.database.Collection("test")
+	handle := drv.Handle(ctx).(*MongoHandle)
 
-	err := drv.WithTransaction(ctx, func(sessCtx context.Context) error {
-		_, err := testColl.InsertOne(sessCtx, bson.M{"value": "test"})
-		if err != nil {
-			return err
-		}
-		panic(errors.New("panic error"))
-	})
-
-	if err == nil {
-		t.Fatal("WithTransaction() error = nil, want error from recovered panic")
-	}
-	if err.Error() != "panic error" {
-		t.Errorf("WithTransaction() error = %v, want 'panic error'", err)
+	handle.Collection("test").InsertOne(bson.M{"n": 1})
+	firstSession := drv.session
+	if err := drv.CommitTx(ctx); err != nil {
+		t.Fatalf("CommitTx() error = %v", err)
 	}
 
-	count, err := testColl.CountDocuments(ctx, bson.M{})
-	if err != nil {
-		t.Fatalf("CountDocuments() error = %v", err)
+	handle.Collection("test").InsertOne(bson.M{"n": 2})
+	if drv.session != firstSession {
+		t.Error("second transaction used a new session; one session per database per run expected")
 	}
-	if count != 0 {
-		t.Errorf("CountDocuments() = %d, want 0 (transaction should rollback after panic)", count)
-	}
-}
-
-func Test_Driver_WithTransaction_PanicString(t *testing.T) {
-	drv, ctx := setupTestDriver(t)
-
-	testColl := drv.database.Collection("test")
-
-	err := drv.WithTransaction(ctx, func(sessCtx context.Context) error {
-		_, err := testColl.InsertOne(sessCtx, bson.M{"value": "test"})
-		if err != nil {
-			return err
-		}
-		panic("string panic")
-	})
-
-	if err == nil {
-		t.Fatal("WithTransaction() error = nil, want error from recovered panic")
-	}
-	if err.Error() != "panic in transaction: string panic" {
-		t.Errorf("WithTransaction() error = %v, want 'panic in transaction: string panic'", err)
+	if err := drv.CommitTx(ctx); err != nil {
+		t.Fatalf("CommitTx() error = %v", err)
 	}
 
-	count, err := testColl.CountDocuments(ctx, bson.M{})
-	if err != nil {
-		t.Fatalf("CountDocuments() error = %v", err)
-	}
-	if count != 0 {
-		t.Errorf("CountDocuments() = %d, want 0 (transaction should rollback after panic)", count)
+	count, _ := drv.database.Collection("test").CountDocuments(ctx, bson.M{})
+	if count != 2 {
+		t.Errorf("CountDocuments() = %d, want 2", count)
 	}
 }
 

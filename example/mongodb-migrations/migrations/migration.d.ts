@@ -17,8 +17,18 @@ type Collection = {
   deleteOne(filter: Record<string, any>): void;
 }
 
-type Handle = {
+// A handle bound to a single configured database. use(alias) returns one of
+// these for any database in graviton.config.toml.
+type DbHandle = {
   collection: (name: string) => Collection;
+}
+
+// The root handle passed to up()/down(). use(alias) selects any configured
+// database by its [[databases]] name. In a single-database project the root
+// handle is also bound directly to that database, so collection() may be called
+// on it without use(). In a multi-database project, use(alias) is required.
+type Handle = DbHandle & {
+  use: (alias: string) => DbHandle;
 }
 
 type Console = {

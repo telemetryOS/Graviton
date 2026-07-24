@@ -2,7 +2,6 @@ package postgresql
 
 import (
 	"context"
-	"database/sql"
 )
 
 type Handle struct {
@@ -16,7 +15,7 @@ type SQLResult struct {
 }
 
 func (h *Handle) Exec(sqlQuery *SQLQuery) *SQLResult {
-	execer := h.getExecutor()
+	execer := h.executor()
 
 	result, err := execer.ExecContext(h.ctx, sqlQuery.Query, sqlQuery.Params...)
 	if err != nil {
@@ -37,18 +36,9 @@ func (h *Handle) Exec(sqlQuery *SQLQuery) *SQLResult {
 }
 
 func (h *Handle) Query(sqlQuery *SQLQuery) []map[string]any {
-	execer := h.getExecutor()
+	execer := h.executor()
 
-	var rows *sql.Rows
-	var err error
-
-	switch ex := execer.(type) {
-	case *sql.DB:
-		rows, err = ex.QueryContext(h.ctx, sqlQuery.Query, sqlQuery.Params...)
-	case *sql.Tx:
-		rows, err = ex.QueryContext(h.ctx, sqlQuery.Query, sqlQuery.Params...)
-	}
-
+	rows, err := execer.QueryContext(h.ctx, sqlQuery.Query, sqlQuery.Params...)
 	if err != nil {
 		panic(err)
 	}
@@ -93,11 +83,11 @@ func (h *Handle) QueryOne(sqlQuery *SQLQuery) map[string]any {
 	return results[0]
 }
 
-func (h *Handle) getExecutor() interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-} {
-	if tx := h.driver.getTxFromContext(h.ctx); tx != nil {
-		return tx
+// executor lazily begins this driver's transaction so every JS-facing operation
+// in a migration body joins it, then rolls back or commits as a per-handle unit.
+func (h *Handle) executor() sqlExecutor {
+	if _, err := h.driver.ensureTx(h.ctx); err != nil {
+		panic(err)
 	}
-	return h.driver.db
+	return h.driver.tx
 }

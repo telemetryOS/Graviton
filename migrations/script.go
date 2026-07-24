@@ -26,27 +26,20 @@ var dummyJsCtor = func(call goja.ConstructorCall) *goja.Object { return nil }
 var dummyJsFnWithRuntime = func(call goja.FunctionCall, jsvm *goja.Runtime) goja.Value { return goja.Undefined() }
 var dummyJsCtorWithRuntime = func(call goja.ConstructorCall, jsvm *goja.Runtime) *goja.Object { return nil }
 
+// Script is a single compiled migration bound to the whole run. handle is the
+// root JS handle (__g__): a unified handle carrying an optional bound database.
+// In a single-database project it is already bound to the only database; in a
+// multi-database project it is unbound and its use(alias) method returns a fresh
+// bound handle. drivers is every driver participating in the run, so the JS
+// value hooks (MaybeIntoJSValue/MaybeFromJSValue) and Globals of every active
+// driver are consulted while a migration interleaves work across them.
 type Script struct {
 	ctx     context.Context
-	driver  driver.Driver
+	drivers []driver.Driver
 	handle  any
 	src     string
 	origin  string
 	runtime *goja.Runtime
-}
-
-func NewScript(ctx context.Context, driver driver.Driver, handle any, src, origin string) *Script {
-	script := &Script{
-		ctx:    ctx,
-		driver: driver,
-		handle: handle,
-		src:    src,
-		origin: origin,
-	}
-
-	script.Evaluate()
-
-	return script
 }
 
 type BuildScriptMessage = api.Message
@@ -65,7 +58,9 @@ func (s *BuildScriptError) Print() {
 	}
 }
 
-func CompileScriptFromFile(ctx context.Context, driver driver.Driver, origin, path string) (*Script, error) {
+// buildMigrationSource bundles a migration file into a single IIFE module. The
+// resulting source assigns the module to the `migration` global.
+func buildMigrationSource(path string) (string, *BuildScriptError) {
 	result := api.Build(api.BuildOptions{
 		EntryPoints: []string{path},
 		Bundle:      true,
@@ -76,19 +71,10 @@ func CompileScriptFromFile(ctx context.Context, driver driver.Driver, origin, pa
 	})
 
 	if len(result.Errors) != 0 {
-		return nil, &BuildScriptError{Errors: result.Errors}
+		return "", &BuildScriptError{Errors: result.Errors}
 	}
 
-	script := &Script{
-		ctx:    ctx,
-		driver: driver,
-		handle: driver.Handle(ctx),
-		src:    string(result.OutputFiles[0].Contents),
-		origin: origin,
-	}
-	script.Evaluate()
-
-	return script, nil
+	return string(result.OutputFiles[0].Contents), nil
 }
 
 func (s *Script) Up() error {
@@ -104,12 +90,23 @@ func (s *Script) Down() error {
 func (s *Script) Evaluate() {
 	s.runtime = goja.New()
 	s.runtime.Set("console", JSConsole(s.runtime))
+
+	// Register every participating driver's runtime data before gathering their
+	// globals; Globals reads the per-runtime state Init installs.
+	for _, d := range s.drivers {
+		d.Init(s.ctx, s.runtime)
+	}
+
+	// The root handle exposes use()/collection()/the SQL surface as methods, so
+	// reflection surfaces them directly onto __g__ — no separate injection.
 	s.runtime.Set("__g__", s.intoJs(reflect.ValueOf(s.handle)))
 
-	s.driver.Init(s.ctx, s.runtime)
-
-	for name, value := range s.driver.Globals(s.ctx, s.runtime) {
-		s.runtime.Set(name, s.intoJs(reflect.ValueOf(value)))
+	// Globals from every driver merge onto the runtime (e.g. ObjectId from a
+	// mongodb driver, sql/SQLQuery from a SQL driver).
+	for _, d := range s.drivers {
+		for name, value := range d.Globals(s.ctx, s.runtime) {
+			s.runtime.Set(name, s.intoJs(reflect.ValueOf(value)))
+		}
 	}
 
 	s.runtime.RunScript(s.origin, s.src)
@@ -130,10 +127,13 @@ func (s *Script) intoJs(vr reflect.Value) goja.Value {
 	}
 
 	// Driver-native types first (e.g. MongoDB ObjectIDs become ObjectId class
-	// instances rather than falling into the generic array conversion).
-	if s.driver != nil && s.runtime != nil {
-		if driverVal, ok := s.driver.MaybeIntoJSValue(s.ctx, s.runtime, intf); ok {
-			return driverVal
+	// instances rather than falling into the generic array conversion). With
+	// several active drivers, the first driver whose hook claims the value wins.
+	if s.runtime != nil {
+		for _, d := range s.drivers {
+			if driverVal, ok := d.MaybeIntoJSValue(s.ctx, s.runtime, intf); ok {
+				return driverVal
+			}
 		}
 	}
 
@@ -251,10 +251,14 @@ func (s *Script) intoJs(vr reflect.Value) goja.Value {
 
 func (s *Script) fromJs(val goja.Value) any {
 	// Driver-native values first: a host-wrapped driver type (ObjectId
-	// instance, BSON binary, …) would otherwise be decomposed by the generic
-	// Object branch below, dragging its methods along as function values.
-	if goVal, ok := s.driver.MaybeFromJSValue(s.ctx, s.runtime, val); ok {
-		return goVal
+	// instance, BSON binary, SQLQuery, …) would otherwise be decomposed by the
+	// generic Object branch below, dragging its methods along as function
+	// values. Every participating driver is consulted so a value minted by one
+	// driver's global still round-trips when handed to another driver's handle.
+	for _, d := range s.drivers {
+		if goVal, ok := d.MaybeFromJSValue(s.ctx, s.runtime, val); ok {
+			return goVal
+		}
 	}
 	switch {
 	case js.IsObjectFromConstructorWithGlobalName(s.runtime, val, "Array"):
@@ -273,10 +277,6 @@ func (s *Script) fromJs(val goja.Value) any {
 		}
 		return goVal
 	default:
-		goVal, ok := s.driver.MaybeFromJSValue(s.ctx, s.runtime, val)
-		if ok {
-			return goVal
-		}
 		return val.Export()
 	}
 }

@@ -1,12 +1,10 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
 
-	"github.com/telemetryos/graviton/driver"
 	"github.com/telemetryos/graviton/migrations"
 	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
 
@@ -14,37 +12,22 @@ import (
 )
 
 var downCmd = &cobra.Command{
-	Use:   "down [database] <migration>",
+	Use:   "down <migration>",
 	Short: "reverses applied migrations up to and including the specified migration",
 	Long: "Will reverse all applied migrations in order up to and including " +
 		"the specified migration",
-	Args: cobra.RangeArgs(1, 2),
+	Args: cobra.ExactArgs(1),
 
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		useDownFnOnDisk, _ := cmd.Flags().GetBool("from-disk")
-		conf := assertConfig()
-		singularDatabase := conf.GetSingularDatabase()
-		switch len(args) {
-		case 0:
-			if singularDatabase != "" {
-				if useDownFnOnDisk {
-					migrationNames := appliedMigrationNamesFromDiskWithPrefix(conf, singularDatabase, toComplete)
-					return append(migrationNames, "-"), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
-				}
-				migrationNames := appliedMigrationNamesWithPrefix(conf, singularDatabase, toComplete)
+		if len(args) == 0 {
+			conf := assertConfig()
+			if useDownFnOnDisk {
+				migrationNames := appliedMigrationNamesFromDiskWithPrefix(conf, toComplete)
 				return append(migrationNames, "-"), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
 			}
-			databaseNames := databaseNamesWithPrefix(conf, toComplete)
-			return databaseNames, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
-		case 1:
-			if singularDatabase == "" {
-				if useDownFnOnDisk {
-					migrationNames := appliedMigrationNamesFromDiskWithPrefix(conf, args[0], toComplete)
-					return append(migrationNames, "-"), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
-				}
-				migrationNames := appliedMigrationNamesWithPrefix(conf, args[0], toComplete)
-				return append(migrationNames, "-"), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
-			}
+			migrationNames := appliedMigrationNamesWithPrefix(conf, toComplete)
+			return append(migrationNames, "-"), cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
 		}
 		return []string{}, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveKeepOrder
 	},
@@ -53,23 +36,17 @@ var downCmd = &cobra.Command{
 		useDownFnOnDisk, _ := cmd.Flags().GetBool("from-disk")
 
 		conf := assertConfig()
-		databaseName, migrationName := resolveAndAssertDBNameAndMigration(conf, cmd, args)
-		databaseConf := conf.Database(databaseName)
+		migrationName := args[0]
 
-		ctx := context.Background()
-
-		drv := driver.FromDatabaseConfig(databaseConf, conf.Databases)
-		if err := drv.Connect(ctx); err != nil {
-			panic(err)
-		}
-		defer drv.Disconnect(ctx)
+		run := connectRun(conf)
+		defer run.Disconnect()
 
 		var rollbackMigrations []*migrations.Migration
 		var err error
 		if useDownFnOnDisk {
-			rollbackMigrations, err = migrations.GetAppliedWithDownFuncFromDisk(ctx, conf.ProjectPath, databaseConf, drv)
+			rollbackMigrations, err = run.GetAppliedWithDownFuncFromDisk()
 		} else {
-			rollbackMigrations, err = migrations.GetApplied(ctx, drv)
+			rollbackMigrations, err = run.GetApplied()
 		}
 		if err != nil {
 			panic(err)
@@ -97,7 +74,7 @@ var downCmd = &cobra.Command{
 			rollbackMigrations = rollbackMigrations[:targetMigrationIndex+1]
 		}
 
-		fmt.Println("Reverting migrations for database `" + databaseName + "` to `" + migrationName + "`")
+		fmt.Println("Reverting migrations to `" + migrationName + "`")
 		if useDownFnOnDisk {
 			fmt.Println("WARN: Using down functions from disk")
 		}
@@ -107,37 +84,27 @@ var downCmd = &cobra.Command{
 		}
 		fmt.Println(strings.Join(rollbackMigrationNames, "\n"))
 
+		appliedMetadata, err := run.AppliedMetadata()
+		if err != nil {
+			panic(err)
+		}
+		markerList := append([]*migrationsmeta.MigrationMetadata{}, appliedMetadata...)
+
 		for _, rollbackMigration := range rollbackMigrations {
-			err = drv.WithTransaction(ctx, func(sessCtx context.Context) error {
-				err := rollbackMigration.Script.Down()
-				if err != nil {
-					return err
+			var remaining []*migrationsmeta.MigrationMetadata
+			for _, m := range markerList {
+				if m.Filename != rollbackMigration.Filename {
+					remaining = append(remaining, m)
 				}
+			}
+			markerList = remaining
 
-				currentApplied, err := drv.GetAppliedMigrationsMetadata(sessCtx)
-				if err != nil {
-					return err
-				}
-
-				var updatedApplied []*migrationsmeta.MigrationMetadata
-				for _, m := range currentApplied {
-					if m.Filename != rollbackMigration.Filename {
-						updatedApplied = append(updatedApplied, m)
-					}
-				}
-
-				if err := drv.SetAppliedMigrationsMetadata(sessCtx, updatedApplied); err != nil {
-					return err
-				}
-
-				return nil
-			})
-			if err != nil {
+			if err := run.ApplyMigration(rollbackMigration.Script.Down, markerList); err != nil {
 				panic(err)
 			}
 		}
 
-		fmt.Println("Reverted migrations for database `" + databaseName + "` to `" + migrationName + "`")
+		fmt.Println("Reverted migrations to `" + migrationName + "`")
 	},
 }
 

@@ -24,7 +24,7 @@ func SetupTestDriver(t *testing.T) (*mongodb.Driver, context.Context) {
 		DatabaseName:  TestDatabaseName,
 	}
 
-	drv := mongodb.New(conf, []*config.DatabaseConfig{conf})
+	drv := mongodb.New(conf)
 	ctx := context.Background()
 
 	if err := drv.Connect(ctx); err != nil {

@@ -30,65 +30,24 @@ type driverRuntimeData struct {
 
 type Driver struct {
 	config      *config.DatabaseConfig
-	databases   []*config.DatabaseConfig
 	client      *mongo.Client
 	database    *mongo.Database
-	sessionCtx  mongo.SessionContext
 	runtimeData map[*goja.Runtime]*driverRuntimeData
+
+	// session is created lazily on first transactional use and reused for the
+	// whole run (one session per database per run). sessionCtx and inTx track
+	// the single transaction that may be open on that session at any time.
+	session    mongo.Session
+	sessionCtx mongo.SessionContext
+	inTx       bool
 }
 
-// New builds a MongoDB driver for conf. databases is the full set of configured
-// [[databases]] entries, retained so the migration handle's sibling(alias)
-// accessor can resolve a stable database alias to its per-environment physical
-// database_name. It may be nil when sibling resolution is not needed.
-func New(conf *config.DatabaseConfig, databases []*config.DatabaseConfig) *Driver {
+// New builds a MongoDB driver for conf.
+func New(conf *config.DatabaseConfig) *Driver {
 	return &Driver{
 		config:      conf,
-		databases:   databases,
 		runtimeData: make(map[*goja.Runtime]*driverRuntimeData),
 	}
-}
-
-// resolveSiblingDatabaseName resolves a configured database alias (the `name`
-// field of a [[databases]] entry) to the physical database_name that db(name)
-// expects. Sibling access reuses this driver's client, session, and
-// transaction, so the alias must name another mongodb database configured on
-// the same connection/cluster; otherwise a clean error is returned.
-func (d *Driver) resolveSiblingDatabaseName(alias string) (string, error) {
-	var conf *config.DatabaseConfig
-	for _, database := range d.databases {
-		if database.Name == alias {
-			conf = database
-			break
-		}
-	}
-	if conf == nil {
-		return "", fmt.Errorf(
-			"no database aliased %q is configured; configured databases: %s",
-			alias, strings.Join(d.configuredDatabaseAliases(), ", "),
-		)
-	}
-	if conf.Kind != config.DatabaseKindMongoDB {
-		return "", fmt.Errorf(
-			"database %q is a %s database; sibling() only reaches mongodb databases on the same cluster",
-			alias, conf.Kind,
-		)
-	}
-	if conf.ConnectionUrl != d.config.ConnectionUrl {
-		return "", fmt.Errorf(
-			"database %q is on a different MongoDB connection; sibling() only reaches databases on the same cluster",
-			alias,
-		)
-	}
-	return conf.DatabaseName, nil
-}
-
-func (d *Driver) configuredDatabaseAliases() []string {
-	aliases := make([]string, 0, len(d.databases))
-	for _, database := range d.databases {
-		aliases = append(aliases, database.Name)
-	}
-	return aliases
 }
 
 func (d *Driver) Connect(ctx context.Context) error {
@@ -140,6 +99,10 @@ func (d *Driver) Connect(ctx context.Context) error {
 func (d *Driver) Disconnect(ctx context.Context) error {
 	if d.client == nil {
 		return nil
+	}
+	if d.session != nil {
+		d.session.EndSession(ctx)
+		d.session = nil
 	}
 	return d.client.Disconnect(ctx)
 }
@@ -210,14 +173,15 @@ func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*migration
 	findOptions := options.Find().SetSort(bson.D{
 		{Key: "filename", Value: 1},
 	})
-	cur, err := d.getMigrationsCollection().Find(ctx, bson.M{}, findOptions)
+	opCtx := d.opCtx(ctx)
+	cur, err := d.getMigrationsCollection().Find(opCtx, bson.M{}, findOptions)
 	if err != nil {
 		return nil, err
 	}
-	defer cur.Close(ctx)
+	defer cur.Close(opCtx)
 
 	var migrationsMetadata []*migrationsmeta.MigrationMetadata
-	if err := cur.All(ctx, &migrationsMetadata); err != nil {
+	if err := cur.All(opCtx, &migrationsMetadata); err != nil {
 		return nil, err
 	}
 
@@ -225,8 +189,9 @@ func (d *Driver) GetAppliedMigrationsMetadata(ctx context.Context) ([]*migration
 }
 
 func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []*migrationsmeta.MigrationMetadata) error {
+	opCtx := d.opCtx(ctx)
 	migrationsCollection := d.getMigrationsCollection()
-	_, err := migrationsCollection.DeleteMany(ctx, bson.M{})
+	_, err := migrationsCollection.DeleteMany(opCtx, bson.M{})
 	if err != nil {
 		return err
 	}
@@ -239,43 +204,92 @@ func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMet
 	for _, migrationMetadata := range migrationsMetadata {
 		documents = append(documents, migrationMetadata)
 	}
-	_, err = migrationsCollection.InsertMany(ctx, documents)
+	_, err = migrationsCollection.InsertMany(opCtx, documents)
 	return err
 }
 
-func (d *Driver) WithTransaction(ctx context.Context, fn func(context.Context) error) error {
-	session, err := d.client.StartSession()
-	if err != nil {
-		return err
+// BeginTx opens a transaction on this driver's session if one is not already
+// open, creating the session lazily on first use.
+func (d *Driver) BeginTx(ctx context.Context) error {
+	_, err := d.ensureTx(ctx)
+	return err
+}
+
+// ensureTx returns the session context bound to this driver's open transaction,
+// beginning one (and lazily creating the session) if none is open yet. It is
+// the shared path behind both BeginTx and the JS-facing collection operations.
+func (d *Driver) ensureTx(ctx context.Context) (mongo.SessionContext, error) {
+	if d.inTx {
+		return d.sessionCtx, nil
 	}
-	defer session.EndSession(ctx)
-
-	_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (result any, returnErr error) {
-		// Publish the active session so the JS-facing collection handles (both
-		// the primary database and any sibling databases reached via db(name))
-		// route their reads and writes through this transaction.
-		d.sessionCtx = sessCtx
-		defer func() { d.sessionCtx = nil }()
-
-		// Recover from panics in the callback and convert to errors
-		defer func() {
-			if r := recover(); r != nil {
-				if e, ok := r.(error); ok {
-					returnErr = e
-				} else {
-					returnErr = fmt.Errorf("panic in transaction: %v", r)
-				}
-			}
-		}()
-
-		// Pass sessCtx as context.Context (mongo.SessionContext embeds context.Context)
-		if err := fn(sessCtx); err != nil {
+	if d.session == nil {
+		session, err := d.client.StartSession()
+		if err != nil {
 			return nil, err
 		}
-		return nil, nil
-	})
+		d.session = session
+	}
+	if err := d.session.StartTransaction(); err != nil {
+		return nil, err
+	}
+	d.sessionCtx = mongo.NewSessionContext(ctx, d.session)
+	d.inTx = true
+	return d.sessionCtx, nil
+}
 
+// CommitTx commits the open transaction, retrying the commit on the
+// UnknownTransactionCommitResult label per the MongoDB transactions contract.
+// The session is kept alive for subsequent transactions in the same run.
+func (d *Driver) CommitTx(ctx context.Context) error {
+	if !d.inTx {
+		return nil
+	}
+	err := d.commitWithRetry(ctx)
+	d.inTx = false
+	d.sessionCtx = nil
 	return err
+}
+
+func (d *Driver) commitWithRetry(ctx context.Context) error {
+	for {
+		err := d.session.CommitTransaction(ctx)
+		if err == nil {
+			return nil
+		}
+		var cmdErr mongo.CommandError
+		if errors.As(err, &cmdErr) && cmdErr.HasErrorLabel("UnknownTransactionCommitResult") {
+			continue
+		}
+		return err
+	}
+}
+
+// RollbackTx aborts the open transaction, if any. The session is retained for
+// subsequent transactions.
+func (d *Driver) RollbackTx(ctx context.Context) error {
+	if !d.inTx {
+		return nil
+	}
+	err := d.session.AbortTransaction(ctx)
+	d.inTx = false
+	d.sessionCtx = nil
+	return err
+}
+
+func (d *Driver) HasOpenTx() bool {
+	return d.inTx
+}
+
+// opCtx returns the context that binds an operation to this driver's open
+// transaction, or the plain context when none is open. Unlike the JS-facing
+// collection surface (which lazily begins a transaction), tracking reads and
+// writes never start one implicitly — status reads run outside a transaction,
+// and the marker write is wrapped in an explicit BeginTx by the runner.
+func (d *Driver) opCtx(ctx context.Context) context.Context {
+	if d.inTx {
+		return d.sessionCtx
+	}
+	return ctx
 }
 
 func (d *Driver) getMigrationsCollection() *mongo.Collection {
