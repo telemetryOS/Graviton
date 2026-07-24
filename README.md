@@ -145,6 +145,74 @@ database can be addressed from the same migration; each `use(alias)` handle
 speaks its own kind's surface (`collection()` for MongoDB, `exec()`/`query()`/
 `queryOne()` for SQL).
 
+### Retiring databases
+
+When a database is fully cut over and no longer used, a migration can retire it
+by renaming it out of the way rather than dropping it outright. `rename(newName)`
+on a database-bound handle renames that database to `newName` — a **literal
+physical name**, not a config alias — and drops the emptied source. The
+convention is a `__migrated__` suffix so the retired data is obvious and
+recoverable:
+
+```typescript
+export function up(g: Handle) {
+  g.use('telemetry_v1').rename('telemetry_v1__migrated__')
+}
+
+export function down(g: Handle) {
+  // Rename back to un-retire. The retired name must be reachable by alias, so
+  // declare it as its own [[databases]] entry (see below).
+  g.use('telemetry_v1_migrated').rename('telemetry_v1')
+}
+```
+
+MongoDB has no native database rename, so `rename` renames every non-system
+collection to the target database with `renameCollection`, verifies the source
+has no collections left, and drops it. It runs on the same cluster (one client).
+
+**Caveats — read before using it:**
+
+- **It is non-transactional and immediate.** `rename` never opens or joins a
+  transaction. It is **not** rolled back with the migration's data
+  transactions: if the body fails *after* a `rename`, the rename stays. Keep a
+  retire-databases migration dedicated to `rename` — do not mix it with
+  transactional collection writes.
+- **It is irreversible except by renaming back.** The source database is dropped
+  once its collections have moved. To reverse it, `down()` renames the retired
+  database back (see above).
+- **No silent clobbering.** If a target collection already exists the rename
+  errors loudly rather than overwriting it.
+- **It refuses unsafe targets.** Renaming the `migrations_db`, or a database that
+  has an open transaction in the current run, errors cleanly.
+- **`rename` is MongoDB-only.** SQL databases do not support it.
+
+Because `rename` addresses its source by the bound handle's alias, a `down()`
+that renames the retired database back needs that database reachable by an alias.
+Declare the retired name as its own `[[databases]]` entry for the round-trip:
+
+```toml
+migrations_db = "tracking"
+
+[[databases]]
+name = "tracking"
+kind = "mongodb"
+connection_url = "mongodb://localhost:27017"
+database_name = "tracking"
+
+[[databases]]
+name = "telemetry_v1"
+kind = "mongodb"
+connection_url = "mongodb://localhost:27017"
+database_name = "telemetry_v1"
+
+# Reachable so down() can rename it back to telemetry_v1.
+[[databases]]
+name = "telemetry_v1_migrated"
+kind = "mongodb"
+connection_url = "mongodb://localhost:27017"
+database_name = "telemetry_v1__migrated__"
+```
+
 ### SQL Migrations
 
 SQL migrations for PostgreSQL, MySQL, and SQLite use a smart `sql` tag function that provides automatic parameterization and validation. The sql tag prevents SQL injection by automatically converting template literals into parameterized queries with proper placeholder syntax for each database.
@@ -401,6 +469,9 @@ interface Collection {
 // A handle bound to a single configured database.
 interface DbHandle {
   collection(name: string): Collection
+  // Rename this database to a literal physical name and drop the source. See
+  // "Retiring databases". Immediate and non-transactional.
+  rename(newName: string): void
 }
 
 interface Handle extends DbHandle {

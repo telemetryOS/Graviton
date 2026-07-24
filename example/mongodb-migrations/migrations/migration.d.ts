@@ -21,6 +21,14 @@ type Collection = {
 // these for any database in graviton.config.toml.
 type DbHandle = {
   collection: (name: string) => Collection;
+  // Rename this database to newName (a literal physical name) and drop the
+  // source. Intended for retiring a database at cutover — e.g. rename it with a
+  // "__migrated__" suffix. The rename is immediate and NON-transactional: it is
+  // not part of the migration's transactions and is not rolled back if the body
+  // later fails. It is irreversible except by renaming back (do that from
+  // down()). Errors if a target collection already exists, if the database has
+  // an open transaction in this run, or on the migrations_db.
+  rename: (newName: string) => void;
 }
 
 // The root handle passed to up()/down(). use(alias) selects any configured

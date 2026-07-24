@@ -280,6 +280,81 @@ func (d *Driver) HasOpenTx() bool {
 	return d.inTx
 }
 
+// RenameDatabase moves this driver's database to newName (a literal physical
+// name) and drops the source. MongoDB has no native database rename, so it is
+// implemented by renaming every non-system collection across databases with the
+// admin renameCollection command and then dropping the emptied source.
+//
+// It is immediate and non-transactional by nature: it runs on the plain context
+// and never opens a session/transaction. It refuses to run when a transaction is
+// already open on this driver, because rename is not part of that transaction
+// and would not roll back with it. renameCollection runs without dropTarget, so
+// a pre-existing target collection surfaces as a loud error rather than silent
+// data loss. Same cluster only — the one client renames within its own server.
+func (d *Driver) RenameDatabase(ctx context.Context, newName string) error {
+	if d.inTx {
+		return fmt.Errorf("cannot rename database %q while a transaction is open on it", d.database.Name())
+	}
+
+	src := d.database.Name()
+	if newName == src {
+		return fmt.Errorf("cannot rename database %q to itself", src)
+	}
+	if newName == "" {
+		return errors.New("cannot rename database to an empty name")
+	}
+
+	names, err := d.nonSystemCollectionNames(ctx)
+	if err != nil {
+		return err
+	}
+
+	admin := d.client.Database("admin")
+	for _, coll := range names {
+		cmd := bson.D{
+			{Key: "renameCollection", Value: src + "." + coll},
+			{Key: "to", Value: newName + "." + coll},
+		}
+		if err := admin.RunCommand(ctx, cmd).Err(); err != nil {
+			return fmt.Errorf("failed to rename %s.%s to %s.%s: %w", src, coll, newName, coll, err)
+		}
+	}
+
+	remaining, err := d.nonSystemCollectionNames(ctx)
+	if err != nil {
+		return err
+	}
+	if len(remaining) != 0 {
+		return fmt.Errorf(
+			"source database %q still has collections after rename, refusing to drop it: %s",
+			src, strings.Join(remaining, ", "),
+		)
+	}
+
+	if err := d.database.Drop(ctx); err != nil {
+		return fmt.Errorf("failed to drop source database %q after rename: %w", src, err)
+	}
+
+	return nil
+}
+
+// nonSystemCollectionNames lists the source database's collections excluding the
+// system.* namespace, which cannot (and must not) be renamed.
+func (d *Driver) nonSystemCollectionNames(ctx context.Context) ([]string, error) {
+	all, err := d.database.ListCollectionNames(ctx, bson.M{})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(all))
+	for _, name := range all {
+		if strings.HasPrefix(name, "system.") {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
 // opCtx returns the context that binds an operation to this driver's open
 // transaction, or the plain context when none is open. Unlike the JS-facing
 // collection surface (which lazily begins a transaction), tracking reads and

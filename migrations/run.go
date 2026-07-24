@@ -96,6 +96,49 @@ func (h *Handle) Use(alias string) *Handle {
 	return &Handle{ctx: h.ctx, run: h.run, alias: alias, drv: d}
 }
 
+// databaseRenamer is implemented by driver kinds that support renaming a whole
+// database (currently only mongodb). It renames the driver's own database to a
+// literal physical newName as an immediate, non-transactional operation.
+type databaseRenamer interface {
+	RenameDatabase(ctx context.Context, newName string) error
+}
+
+// Rename renames the database this handle is bound to (the one use(alias)
+// selected, or the sole database in a single-database project) to the literal
+// physical name newName, then drops the source. It is the operation behind the
+// retire-databases pattern: a dedicated migration renames a no-longer-used
+// database to a __migrated__-suffixed name at cutover, and its down() renames it
+// back.
+//
+// newName is not resolved through config — it is a deliberate literal, so the
+// renamed database leaves config-managed space. Renaming from an unbound
+// multi-database root (before use(alias)), renaming the migrations_db, or
+// renaming a database with an open transaction on this run errors cleanly.
+// rename is only supported for mongodb databases.
+//
+// It is immediate and irreversible except by renaming back: it does not run in
+// (and is not rolled back with) the migration's transactions, so if the body
+// later fails the rename is not undone. Use it in a dedicated retire-databases
+// migration, not mixed with transactional writes.
+func (h *Handle) Rename(newName string) {
+	if h.drv == nil {
+		panic(fmt.Errorf(
+			"multiple databases are configured (%s); call use(alias) to select one before renaming",
+			strings.Join(h.run.order, ", "),
+		))
+	}
+	if h.alias == h.run.conf.MigrationsDb {
+		panic(fmt.Errorf("cannot rename the migrations_db database %q", h.alias))
+	}
+	renamer, ok := h.drv.(databaseRenamer)
+	if !ok {
+		panic(fmt.Errorf("rename is not supported for database %q; only mongodb databases can be renamed", h.alias))
+	}
+	if err := renamer.RenameDatabase(h.ctx, newName); err != nil {
+		panic(err)
+	}
+}
+
 func (h *Handle) Collection(name string) any { return h.delegate("Collection", name) }
 func (h *Handle) Exec(query any) any         { return h.delegate("Exec", query) }
 func (h *Handle) Query(query any) any        { return h.delegate("Query", query) }

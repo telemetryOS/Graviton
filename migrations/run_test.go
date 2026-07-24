@@ -342,6 +342,89 @@ func Test_Use_UnknownAliasPanicsListingAliases(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// rename() contract tests (no database connection required).
+// -----------------------------------------------------------------------------
+
+func Test_Rename_UnboundRootPanicsRequiringUse(t *testing.T) {
+	conf := &config.Config{
+		MigrationsDb:   "a",
+		MigrationsPath: "migrations",
+		Databases:      []*config.DatabaseConfig{mongoCfg("a"), mongoCfg("b")},
+	}
+	run := NewRun(context.Background(), conf)
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("rename() on the unbound root did not panic, want a multi-database error")
+		}
+		err, _ := r.(error)
+		if err == nil || !strings.Contains(err.Error(), "use(alias)") {
+			t.Errorf("unbound-handle rename panic = %v, want mention of use(alias)", r)
+		}
+	}()
+	run.rootHandle().Rename("whatever")
+}
+
+func Test_Rename_MigrationsDbPanics(t *testing.T) {
+	conf := &config.Config{
+		MigrationsDb:   "a",
+		MigrationsPath: "migrations",
+		Databases:      []*config.DatabaseConfig{mongoCfg("a"), mongoCfg("b")},
+	}
+	run := NewRun(context.Background(), conf)
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("rename() on the migrations_db did not panic")
+		}
+		err, _ := r.(error)
+		if err == nil || !strings.Contains(err.Error(), "migrations_db") {
+			t.Errorf("migrations_db rename panic = %v, want mention of migrations_db", r)
+		}
+	}()
+	run.rootHandle().Use("a").Rename("a__migrated__")
+}
+
+func Test_Rename_UnknownAliasPanics(t *testing.T) {
+	conf := &config.Config{
+		MigrationsDb:   "a",
+		MigrationsPath: "migrations",
+		Databases:      []*config.DatabaseConfig{mongoCfg("a"), mongoCfg("b")},
+	}
+	run := NewRun(context.Background(), conf)
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("use(unknown).rename() did not panic")
+		}
+		err, _ := r.(error)
+		if err == nil || !strings.Contains(err.Error(), "bogus") {
+			t.Errorf("unknown-alias rename panic = %v, want mention of the alias", r)
+		}
+	}()
+	run.rootHandle().Use("bogus").Rename("bogus__migrated__")
+}
+
+func Test_Rename_UnsupportedKindPanics(t *testing.T) {
+	run, _, _, _, _ := fakeRun()
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("rename() on a non-mongodb database did not panic")
+		}
+		err, _ := r.(error)
+		if err == nil || !strings.Contains(err.Error(), "mongodb") {
+			t.Errorf("unsupported-kind rename panic = %v, want mention of mongodb", r)
+		}
+	}()
+	run.rootHandle().Use("a").Rename("a__migrated__")
+}
+
+// -----------------------------------------------------------------------------
 // Live two-database Mongo tests: interleaving, rollback, and linear ordering.
 // -----------------------------------------------------------------------------
 
@@ -509,6 +592,44 @@ func Test_Live_InterleavedTwoDatabase_FailureRollsBackBothNoMarker(t *testing.T)
 	}
 }
 
+const renameWithOpenTx = `
+export function up(g) {
+  g.use('b').collection('items').insertOne({ n: 1 })
+  g.use('b').rename('graviton_run_test_b__migrated__')
+}
+export function down(g) {}
+`
+
+func Test_Live_Rename_OpenTransactionOnSourceFails(t *testing.T) {
+	run, migrationsDir, _, dbB := setupTwoDbRun(t)
+	migratedB := dbB + "__migrated__"
+	t.Cleanup(func() { dropDatabases(t, migratedB) })
+	writeMigration(t, migrationsDir, "20240101000000-rename-open-tx.migration.ts", renameWithOpenTx)
+
+	pending, err := run.GetPending()
+	if err != nil {
+		t.Fatalf("GetPending() error = %v", err)
+	}
+	m := pending[0]
+	m.AppliedAt = time.Now()
+	err = run.ApplyMigration(m.Script.Up, []*migrationsmeta.MigrationMetadata{m.MigrationMetadata})
+	if err == nil {
+		t.Fatal("ApplyMigration() error = nil, want error renaming a database with an open transaction")
+	}
+	if !strings.Contains(err.Error(), "transaction") {
+		t.Errorf("error = %v, want it to mention the open transaction", err)
+	}
+
+	// The guard fired before any collection moved; the source is untouched (its
+	// insert rolled back) and the __migrated__ database was never created.
+	if got := countDocs(t, dbB, "items"); got != 0 {
+		t.Errorf("db b items = %d, want 0 (insert should roll back)", got)
+	}
+	if got := countDocs(t, migratedB, "items"); got != 0 {
+		t.Errorf("migrated db items = %d, want 0 (rename must not have run)", got)
+	}
+}
+
 const orderOne = `
 export function up(g) { g.use('a').collection('items').insertOne({ m: 'one' }) }
 export function down(g) { g.use('a').collection('items').deleteMany({ m: 'one' }) }
@@ -625,5 +746,96 @@ func Test_Live_LinearOrdering_UpDownStatusSetHead(t *testing.T) {
 	pendingAfter, _ = run.GetPending()
 	if len(pendingAfter) != 0 {
 		t.Errorf("pending after set-head = %v, want none", migrationNames(pendingAfter))
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Live rename round-trip: a retire-databases migration whose up() renames a
+// database to a __migrated__ name and whose down() renames it back.
+// -----------------------------------------------------------------------------
+
+const retireUpDown = `
+export function up(g) {
+  g.use('live').rename('graviton_rt_live__migrated__')
+}
+export function down(g) {
+  g.use('retired').rename('graviton_rt_live')
+}
+`
+
+func Test_Live_Rename_RetireRoundTrip(t *testing.T) {
+	projectDir := t.TempDir()
+	migrationsDir := filepath.Join(projectDir, "migrations")
+	if err := os.MkdirAll(migrationsDir, 0755); err != nil {
+		t.Fatalf("mkdir migrations: %v", err)
+	}
+
+	const (
+		tracking = "graviton_rt_tracking"
+		live     = "graviton_rt_live"
+		migrated = "graviton_rt_live__migrated__"
+	)
+
+	conf := &config.Config{
+		ProjectPath:    projectDir,
+		MigrationsDb:   "tracking",
+		MigrationsPath: "migrations",
+		Databases: []*config.DatabaseConfig{
+			{Name: "tracking", Kind: config.DatabaseKindMongoDB, ConnectionUrl: testMongoURL, DatabaseName: tracking},
+			{Name: "live", Kind: config.DatabaseKindMongoDB, ConnectionUrl: testMongoURL, DatabaseName: live},
+			// The retired alias reaches the __migrated__ database so down() can
+			// rename it back — rename addresses its source by config alias.
+			{Name: "retired", Kind: config.DatabaseKindMongoDB, ConnectionUrl: testMongoURL, DatabaseName: migrated},
+		},
+	}
+
+	run := NewRun(context.Background(), conf)
+	if err := run.Connect(); err != nil {
+		t.Skipf("MongoDB not available on localhost: %v", err)
+	}
+	dropDatabases(t, tracking, live, migrated)
+	t.Cleanup(func() {
+		dropDatabases(t, tracking, live, migrated)
+		run.Disconnect()
+	})
+
+	// Seed the live database before retiring it.
+	seed := rawClient(t).Database(live).Collection("items")
+	if _, err := seed.InsertOne(context.Background(), bson.M{"n": 1}); err != nil {
+		t.Fatalf("seed live db: %v", err)
+	}
+
+	writeMigration(t, migrationsDir, "20240101000000-retire-live.migration.ts", retireUpDown)
+
+	pending, err := run.GetPending()
+	if err != nil {
+		t.Fatalf("GetPending() error = %v", err)
+	}
+	m := pending[0]
+	m.AppliedAt = time.Now()
+
+	// up: live is retired to the __migrated__ name and dropped.
+	if err := run.ApplyMigration(m.Script.Up, []*migrationsmeta.MigrationMetadata{m.MigrationMetadata}); err != nil {
+		t.Fatalf("ApplyMigration(up) error = %v", err)
+	}
+	if got := countDocs(t, live, "items"); got != 0 {
+		t.Errorf("live items after retire = %d, want 0 (source dropped)", got)
+	}
+	if got := countDocs(t, migrated, "items"); got != 1 {
+		t.Errorf("migrated items after retire = %d, want 1 (collection moved)", got)
+	}
+	if applied, _ := run.GetApplied(); len(applied) != 1 {
+		t.Errorf("applied after up = %d, want 1 (marker written despite non-transactional rename)", len(applied))
+	}
+
+	// down: renamed back to the live name.
+	if err := run.ApplyMigration(m.Script.Down, []*migrationsmeta.MigrationMetadata{}); err != nil {
+		t.Fatalf("ApplyMigration(down) error = %v", err)
+	}
+	if got := countDocs(t, migrated, "items"); got != 0 {
+		t.Errorf("migrated items after rename-back = %d, want 0 (source dropped)", got)
+	}
+	if got := countDocs(t, live, "items"); got != 1 {
+		t.Errorf("live items after rename-back = %d, want 1 (round-trip)", got)
 	}
 }
