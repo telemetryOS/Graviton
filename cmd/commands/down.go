@@ -62,18 +62,10 @@ var downCmd = &cobra.Command{
 		})
 
 		if migrationName != "-" {
-			targetMigrationIndex := -1
-			for i, appliedMigration := range rollbackMigrations {
-				if appliedMigration.Name() == migrationName {
-					targetMigrationIndex = i
-					break
-				}
-			}
-			if targetMigrationIndex == -1 {
-				fmt.Println("target migration not found")
-				return
-			}
-
+			// A name that matches nothing exits non-zero rather than reporting
+			// success having done nothing, so a script cannot mistake a typo for
+			// a completed rollback.
+			targetMigrationIndex := findMigrationIndex(rollbackMigrations, migrationName, "down")
 			rollbackMigrations = rollbackMigrations[:targetMigrationIndex+1]
 		}
 

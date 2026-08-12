@@ -54,19 +54,13 @@ var upCmd = &cobra.Command{
 			return
 		}
 
-		targetMigrationIndex := -1
-		if migrationName == "" {
-			targetMigrationIndex = len(applyMigrations) - 1
-		}
-		for i, pendingMigration := range applyMigrations {
-			if pendingMigration.Name() == migrationName {
-				targetMigrationIndex = i
-				break
-			}
-		}
-		if targetMigrationIndex == -1 {
-			fmt.Println("target migration not found")
-			return
+		// With no argument, apply everything pending. The search only runs when a
+		// name was given: it used to run either way, so a migration whose
+		// filename does not parse (Name() == "") would match the empty argument
+		// and silently truncate the run at that point.
+		targetMigrationIndex := len(applyMigrations) - 1
+		if migrationName != "" {
+			targetMigrationIndex = findMigrationIndex(applyMigrations, migrationName, "up")
 		}
 		applyMigrations = applyMigrations[:targetMigrationIndex+1]
 

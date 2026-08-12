@@ -52,16 +52,18 @@ var setHeadCmd = &cobra.Command{
 
 		allMigrations := append(appliedMigrations, pendingMigrations...)
 
+		// Resolve the name first. Previously this loop appended as it searched and
+		// simply ran off the end when nothing matched, marking every migration
+		// applied — the opposite of what a mistyped name should do.
+		targetIndex := findMigrationIndex(allMigrations, migrationName, "set-head")
+
 		migrationsMetadata := []*migrationsmeta.MigrationMetadata{}
-		for _, migration := range allMigrations {
+		for _, migration := range allMigrations[:targetIndex+1] {
 			migrationsMetadata = append(migrationsMetadata, &migrationsmeta.MigrationMetadata{
 				Filename:  migration.Filename,
 				Source:    migration.Source,
 				AppliedAt: time.Now(),
 			})
-			if migration.Name() == migrationName {
-				break
-			}
 		}
 
 		if err := run.SetHead(migrationsMetadata); err != nil {
