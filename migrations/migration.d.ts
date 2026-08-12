@@ -116,6 +116,49 @@ type Console = {
 }
 declare const console: Console;
 
+// Raw bytes. Every crypto and enc function takes and returns these, so nothing
+// has to guess whether a value arrived encoded or not.
+type Bytes = ArrayBuffer;
+
+type Encoding = "base64" | "base64url" | "hex" | "utf8";
+
+// Conversion between encoded strings and bytes. Separate from crypto because
+// migrations meet base64 blobs and hex ids in plenty of places that have
+// nothing to do with keys. An unknown encoding throws rather than guessing.
+type Enc = {
+  decode(encoding: Encoding, text: string): Bytes;
+  encode(encoding: Encoding, bytes: Bytes): string;
+}
+declare const enc: Enc;
+
+// Process environment. get() throws naming the variable when it is unset — an
+// empty value flowing into a decrypt or a comparison fails far from its cause.
+type Env = {
+  get(name: string): string;
+  has(name: string): boolean;
+}
+declare const env: Env;
+
+type AeadAlgorithm = "aes-gcm" | "chacha20-poly1305";
+type HashAlgorithm = "sha256" | "sha512" | "sha1";
+
+// Algorithm first, so a call names the operation it performs. Decryption is
+// authenticated: a wrong key or altered ciphertext throws rather than yielding
+// wrong plaintext. The nonce is expected at the front of the ciphertext, and
+// encrypt() writes it there.
+//
+// encrypt() requires an explicit nonce. A random one would make a migration
+// non-convergent — re-running it would rewrite unchanged rows with different
+// ciphertext and break provenance comparison — so callers derive one
+// deterministically from what they are encrypting.
+type Crypto = {
+  decrypt(algorithm: AeadAlgorithm, key: Bytes, ciphertext: Bytes): Bytes;
+  encrypt(algorithm: AeadAlgorithm, key: Bytes, plaintext: Bytes, nonce: Bytes): Bytes;
+  hash(algorithm: HashAlgorithm, data: Bytes): Bytes;
+  hmac(algorithm: HashAlgorithm, key: Bytes, data: Bytes): Bytes;
+}
+declare const crypto: Crypto;
+
 declare class ObjectId {
   constructor(hexValue: string);
   toHexString(): string;

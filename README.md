@@ -631,6 +631,63 @@ declare class ObjectId {
 
 The ObjectId class is available globally for working with MongoDB object identifiers.
 
+### Environment, encoding and crypto
+
+Three globals are available to every migration regardless of which databases it
+touches, because they are properties of the runtime rather than of a driver.
+
+```typescript
+type Bytes = ArrayBuffer
+
+interface Env {
+  // Throws naming the variable when unset. An empty value flowing into a
+  // decrypt or a comparison fails far from its cause.
+  get(name: string): string
+  has(name: string): boolean
+}
+
+interface Enc {
+  decode(encoding: "base64" | "base64url" | "hex" | "utf8", text: string): Bytes
+  encode(encoding: "base64" | "base64url" | "hex" | "utf8", bytes: Bytes): string
+}
+
+interface Crypto {
+  decrypt(algorithm: "aes-gcm" | "chacha20-poly1305", key: Bytes, ciphertext: Bytes): Bytes
+  encrypt(algorithm: "aes-gcm" | "chacha20-poly1305", key: Bytes, plaintext: Bytes, nonce: Bytes): Bytes
+  hash(algorithm: "sha256" | "sha512" | "sha1", data: Bytes): Bytes
+  hmac(algorithm: "sha256" | "sha512" | "sha1", key: Bytes, data: Bytes): Bytes
+}
+```
+
+Reading data that a legacy service wrote encrypted:
+
+```typescript
+const key = enc.decode("base64", env.get("EDM_AES_KEY_V1"))
+const raw = enc.decode("base64", row.url)
+const url = JSON.parse(enc.encode("utf8", crypto.decrypt("aes-gcm", key, raw)))
+```
+
+The algorithm comes first so a call names the operation it performs, and an
+unknown algorithm or encoding throws listing the supported set — a typo that
+silently fell back would be written to the target database before anyone
+noticed. Keys and data are always bytes; `enc` performs every conversion, so
+nothing has to infer whether an argument arrived encoded.
+
+Decryption is authenticated. A wrong key or altered ciphertext throws rather
+than returning wrong plaintext. The nonce is expected at the front of the
+ciphertext, which is where `encrypt` writes it. AES keys may be 16, 24 or 32
+bytes.
+
+`encrypt` requires an explicit nonce. Migrations must be convergent: with a
+random nonce, re-running one would produce different ciphertext for unchanged
+input, rewriting rows that did not change and breaking any comparison against
+what was written previously. Derive a nonce deterministically from the data
+being encrypted, or from a key-scoped salt.
+
+Key material is an ordinary string once `env.get` returns it, so it can be
+logged or serialised like any other value. Keep it out of `console.log` and out
+of anything written back to a database.
+
 ### SQL API
 
 SQL migrations use a handle that provides three methods: exec for executing statements that modify data, query for retrieving multiple rows, and queryOne for retrieving a single row or null. All methods accept SQLQuery objects created by the sql tag function.

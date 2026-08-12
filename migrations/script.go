@@ -90,6 +90,12 @@ func (s *Script) Down() error {
 func (s *Script) Evaluate() {
 	s.runtime = goja.New()
 	s.runtime.Set("console", JSConsole(s.runtime))
+	// Driver-agnostic built-ins: every migration gets these regardless of
+	// which databases it touches, so they are set here rather than coming
+	// from a driver's Globals.
+	s.runtime.Set("env", JSEnv(s.runtime))
+	s.runtime.Set("enc", JSEnc(s.runtime))
+	s.runtime.Set("crypto", JSCrypto(s.runtime))
 
 	// Register every participating driver's runtime data before gathering their
 	// globals; Globals reads the per-runtime state Init installs.
