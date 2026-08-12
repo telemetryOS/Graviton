@@ -652,11 +652,36 @@ interface Enc {
 }
 
 interface Crypto {
-  decrypt(algorithm: "aes-gcm" | "chacha20-poly1305", key: Bytes, ciphertext: Bytes): Bytes
-  encrypt(algorithm: "aes-gcm" | "chacha20-poly1305", key: Bytes, plaintext: Bytes, nonce: Bytes): Bytes
-  hash(algorithm: "sha256" | "sha512" | "sha1", data: Bytes): Bytes
-  hmac(algorithm: "sha256" | "sha512" | "sha1", key: Bytes, data: Bytes): Bytes
+  // Symmetric AEAD and public-key encryption share these two functions; the
+  // algorithm decides how the key is read. nonce is optional for AEAD — pass
+  // one for reproducible output, omit it for a random one.
+  decrypt(algorithm: EncryptAlgorithm, key: Bytes, ciphertext: Bytes): Bytes
+  encrypt(algorithm: EncryptAlgorithm, key: Bytes, plaintext: Bytes, nonce?: Bytes): Bytes
+
+  hash(algorithm: HashAlgorithm, data: Bytes): Bytes
+  hmac(algorithm: HashAlgorithm, key: Bytes, data: Bytes): Bytes
+
+  random(length: number): Bytes
+  generateKeyPair(algorithm: KeyPairAlgorithm): { publicKey: Bytes, privateKey: Bytes }
+
+  sign(algorithm: SignAlgorithm, privateKey: Bytes, data: Bytes): Bytes
+  verify(algorithm: SignAlgorithm, publicKey: Bytes, data: Bytes, signature: Bytes): boolean
+
+  exchange(algorithm: ExchangeAlgorithm, privateKey: Bytes, peerPublicKey: Bytes): Bytes
+  derive(algorithm: DeriveAlgorithm, secret: Bytes, salt: Bytes, info: Bytes, length: number): Bytes
+
+  password: {
+    hash(algorithm: "bcrypt" | "argon2id", password: Bytes): string
+    verify(algorithm: "bcrypt" | "argon2id", password: Bytes, encoded: string): boolean
+  }
 }
+
+// encrypt/decrypt  aes-gcm, chacha20-poly1305, rsa-oaep-sha256, rsa-oaep-sha512
+// hash/hmac        sha256, sha384, sha512, sha3-256, sha3-512, sha1
+// generateKeyPair  ed25519, x25519, ecdsa-p256/384/521, rsa-2048/3072/4096
+// sign/verify      ed25519, ecdsa-sha256/384/512, rsa-pss-sha256, rsa-pkcs1-sha256
+// exchange         x25519, ecdh-p256/384/521
+// derive           hkdf-sha256/512, pbkdf2-sha256/512, scrypt, argon2id
 ```
 
 Reading data that a legacy service wrote encrypted:
@@ -674,15 +699,32 @@ noticed. Keys and data are always bytes; `enc` performs every conversion, so
 nothing has to infer whether an argument arrived encoded.
 
 Decryption is authenticated. A wrong key or altered ciphertext throws rather
-than returning wrong plaintext. The nonce is expected at the front of the
+than returning wrong plaintext. For AEAD the nonce sits at the front of the
 ciphertext, which is where `encrypt` writes it. AES keys may be 16, 24 or 32
 bytes.
 
-`encrypt` requires an explicit nonce. Migrations must be convergent: with a
-random nonce, re-running one would produce different ciphertext for unchanged
-input, rewriting rows that did not change and breaking any comparison against
-what was written previously. Derive a nonce deterministically from the data
-being encrypted, or from a key-scoped salt.
+`encrypt` takes an optional nonce. Supplying one makes the output reproducible,
+so re-running a migration leaves unchanged rows alone; omitting it generates a
+random nonce, so the same input encrypts differently each run. Which of those a
+migration needs is its author's decision.
+
+Key pairs come back as two independent byte values, PKCS#8 for the private key
+and SPKI for the public one, so a key a migration writes is readable by any
+other language. Generating one produces a new value on every call — a migration
+that must not mint a second identity should check whether the key already
+exists before generating.
+
+```typescript
+const pair = crypto.generateKeyPair("ed25519")
+const sig  = crypto.sign("ed25519", pair.privateKey, enc.decode("utf8", body))
+const ok   = crypto.verify("ed25519", pair.publicKey, enc.decode("utf8", body), sig)
+```
+
+`password.hash` and `password.verify` are kept apart from `derive` deliberately.
+They use the same primitives for a different job, and their output is a
+self-describing string carrying its own cost parameters, so a stored hash stays
+verifiable after the defaults here change. Reach for `derive` when you need key
+material, and `password` when you need to check a secret someone typed.
 
 Key material is an ordinary string once `env.get` returns it, so it can be
 logged or serialised like any other value. Keep it out of `console.log` and out

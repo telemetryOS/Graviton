@@ -133,17 +133,8 @@ func Test_Crypto_UnknownAlgorithmThrows(t *testing.T) {
 	}
 }
 
-// Test_Crypto_EncryptRequiresNonce pins the convergence constraint: encryption
-// without an explicit nonce is refused, because a random one would make a
-// migration produce different output on every run.
-func Test_Crypto_EncryptRequiresNonce(t *testing.T) {
-	jsvm := newTestRuntime(t)
-	msg := runErr(t, jsvm, `crypto.encrypt("aes-gcm", enc.decode("utf8", "0123456789abcdef"), enc.decode("utf8", "data"))`)
-	if !strings.Contains(msg, "explicit") || !strings.Contains(msg, "nonce") {
-		t.Errorf("error should explain the nonce requirement, got %q", msg)
-	}
-}
-
+// Supplying a nonce makes encryption reproducible — the option a migration
+// author takes when a re-run must not rewrite unchanged rows.
 func Test_Crypto_EncryptDecryptRoundTripIsDeterministic(t *testing.T) {
 	jsvm := newTestRuntime(t)
 	src := `

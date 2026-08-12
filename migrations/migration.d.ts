@@ -139,23 +139,79 @@ type Env = {
 }
 declare const env: Env;
 
-type AeadAlgorithm = "aes-gcm" | "chacha20-poly1305";
-type HashAlgorithm = "sha256" | "sha512" | "sha1";
+// Symmetric AEAD, and public-key encryption through the same two functions —
+// the algorithm decides how the key argument is read.
+type EncryptAlgorithm =
+  | "aes-gcm"
+  | "chacha20-poly1305"
+  | "rsa-oaep-sha256"
+  | "rsa-oaep-sha512";
 
-// Algorithm first, so a call names the operation it performs. Decryption is
-// authenticated: a wrong key or altered ciphertext throws rather than yielding
-// wrong plaintext. The nonce is expected at the front of the ciphertext, and
-// encrypt() writes it there.
-//
-// encrypt() requires an explicit nonce. A random one would make a migration
-// non-convergent — re-running it would rewrite unchanged rows with different
-// ciphertext and break provenance comparison — so callers derive one
-// deterministically from what they are encrypting.
+type HashAlgorithm = "sha256" | "sha384" | "sha512" | "sha3-256" | "sha3-512" | "sha1";
+
+type KeyPairAlgorithm =
+  | "ed25519" | "x25519"
+  | "ecdsa-p256" | "ecdsa-p384" | "ecdsa-p521"
+  | "rsa-2048" | "rsa-3072" | "rsa-4096";
+
+type SignAlgorithm =
+  | "ed25519"
+  | "ecdsa-sha256" | "ecdsa-sha384" | "ecdsa-sha512"
+  | "rsa-pss-sha256" | "rsa-pkcs1-sha256";
+
+type ExchangeAlgorithm = "x25519" | "ecdh-p256" | "ecdh-p384" | "ecdh-p521";
+
+type DeriveAlgorithm =
+  | "hkdf-sha256" | "hkdf-sha512"
+  | "pbkdf2-sha256" | "pbkdf2-sha512"
+  | "scrypt" | "argon2id";
+
+type PasswordAlgorithm = "bcrypt" | "argon2id";
+
+// A key pair as two independent byte values: PKCS#8 for the private key, SPKI
+// for the public one, so a key written by a migration is readable elsewhere.
+type KeyPair = {
+  publicKey: Bytes;
+  privateKey: Bytes;
+}
+
+// Algorithm first, so a call names the operation it performs. An unknown
+// algorithm throws listing the supported set rather than falling back.
 type Crypto = {
-  decrypt(algorithm: AeadAlgorithm, key: Bytes, ciphertext: Bytes): Bytes;
-  encrypt(algorithm: AeadAlgorithm, key: Bytes, plaintext: Bytes, nonce: Bytes): Bytes;
+  // Authenticated: a wrong key or altered ciphertext throws rather than
+  // yielding wrong plaintext. For AEAD the nonce sits at the front of the
+  // ciphertext, where encrypt() writes it.
+  decrypt(algorithm: EncryptAlgorithm, key: Bytes, ciphertext: Bytes): Bytes;
+  // nonce is optional for AEAD: pass one for reproducible output, omit it for a
+  // random one. Whether a migration needs to be reproducible is its author's
+  // call. Ignored by the rsa-oaep algorithms.
+  encrypt(algorithm: EncryptAlgorithm, key: Bytes, plaintext: Bytes, nonce?: Bytes): Bytes;
+
   hash(algorithm: HashAlgorithm, data: Bytes): Bytes;
   hmac(algorithm: HashAlgorithm, key: Bytes, data: Bytes): Bytes;
+
+  random(length: number): Bytes;
+  generateKeyPair(algorithm: KeyPairAlgorithm): KeyPair;
+
+  sign(algorithm: SignAlgorithm, privateKey: Bytes, data: Bytes): Bytes;
+  // Returns false for an invalid signature rather than throwing — that is an
+  // outcome to branch on, not an error.
+  verify(algorithm: SignAlgorithm, publicKey: Bytes, data: Bytes, signature: Bytes): boolean;
+
+  // Shared secret from your private key and the peer's public key. Both sides
+  // arrive at the same bytes.
+  exchange(algorithm: ExchangeAlgorithm, privateKey: Bytes, peerPublicKey: Bytes): Bytes;
+
+  // Key derivation. info is used by hkdf only; pass empty bytes otherwise.
+  derive(algorithm: DeriveAlgorithm, secret: Bytes, salt: Bytes, info: Bytes, length: number): Bytes;
+
+  // Password hashing, kept apart from derive(): the output is a self-describing
+  // string carrying its own parameters, so a stored hash stays verifiable after
+  // the defaults change.
+  password: {
+    hash(algorithm: PasswordAlgorithm, password: Bytes): string;
+    verify(algorithm: PasswordAlgorithm, password: Bytes, encoded: string): boolean;
+  };
 }
 declare const crypto: Crypto;
 

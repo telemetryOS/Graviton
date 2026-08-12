@@ -4,11 +4,15 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha3"
 	"crypto/sha512"
 	"fmt"
 	"hash"
+	"strings"
 
 	"github.com/dop251/goja"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -16,8 +20,9 @@ import (
 
 // Algorithm names, listed in errors so a typo names the alternatives.
 const (
-	aeadAlgorithms = "aes-gcm, chacha20-poly1305"
-	hashAlgorithms = "sha256, sha512, sha1"
+	aeadAlgorithms    = "aes-gcm, chacha20-poly1305"
+	asymEncAlgorithms = "rsa-oaep-sha256, rsa-oaep-sha512"
+	hashAlgorithms    = "sha256, sha384, sha512, sha3-256, sha3-512, sha1"
 )
 
 // JSCrypto builds the `crypto` global. Every function takes the algorithm as
@@ -51,6 +56,13 @@ func JSCrypto(jsvm *goja.Runtime) *goja.Object {
 		if err != nil {
 			panic(jsvm.NewGoError(err))
 		}
+		if isAsymmetric(algorithm) {
+			plain, err := rsaDecrypt(algorithm, key, data)
+			if err != nil {
+				panic(jsvm.NewGoError(err))
+			}
+			return jsvm.ToValue(jsvm.NewArrayBuffer(plain))
+		}
 		aead, err := newAEAD(algorithm, key)
 		if err != nil {
 			panic(jsvm.NewGoError(err))
@@ -76,18 +88,29 @@ func JSCrypto(jsvm *goja.Runtime) *goja.Object {
 		if err != nil {
 			panic(jsvm.NewGoError(err))
 		}
+		if isAsymmetric(algorithm) {
+			sealed, err := rsaEncrypt(algorithm, key, data)
+			if err != nil {
+				panic(jsvm.NewGoError(err))
+			}
+			return jsvm.ToValue(jsvm.NewArrayBuffer(sealed))
+		}
 		aead, err := newAEAD(algorithm, key)
 		if err != nil {
 			panic(jsvm.NewGoError(err))
 		}
+		// The nonce is optional. Supplying one makes the output reproducible;
+		// omitting it generates a random one, so re-running produces different
+		// ciphertext for the same input. Which of those a migration wants is the
+		// author's call, so neither is forced here.
 		nonceVal := call.Argument(3)
+		var nonce []byte
 		if goja.IsUndefined(nonceVal) || goja.IsNull(nonceVal) {
-			panic(jsvm.NewGoError(fmt.Errorf(
-				"crypto.encrypt requires an explicit %d-byte nonce: a random one would make this migration produce different output on every run",
-				aead.NonceSize())))
-		}
-		nonce, err := BytesFromJS(jsvm, nonceVal)
-		if err != nil {
+			nonce = make([]byte, aead.NonceSize())
+			if _, err := rand.Read(nonce); err != nil {
+				panic(jsvm.NewGoError(err))
+			}
+		} else if nonce, err = BytesFromJS(jsvm, nonceVal); err != nil {
 			panic(jsvm.NewGoError(fmt.Errorf("nonce: %w", err)))
 		}
 		if len(nonce) != aead.NonceSize() {
@@ -128,6 +151,8 @@ func JSCrypto(jsvm *goja.Runtime) *goja.Object {
 		mac.Write(data)
 		return jsvm.ToValue(jsvm.NewArrayBuffer(mac.Sum(nil)))
 	})
+
+	registerKeyFunctions(jsvm, cryptoObj)
 
 	return cryptoObj
 }
@@ -176,12 +201,75 @@ func newHash(algorithm string) (hash.Hash, error) {
 	switch algorithm {
 	case "sha256":
 		return sha256.New(), nil
+	case "sha384":
+		return sha512.New384(), nil
 	case "sha512":
 		return sha512.New(), nil
+	case "sha3-256":
+		return sha3.New256(), nil
+	case "sha3-512":
+		return sha3.New512(), nil
 	case "sha1":
 		// Present for reading legacy digests, not for new ones.
 		return sha1.New(), nil
 	default:
 		return nil, fmt.Errorf("unknown algorithm %q; supported: %s", algorithm, hashAlgorithms)
 	}
+}
+
+// isAsymmetric reports whether an algorithm name selects public-key encryption
+// rather than a symmetric AEAD. encrypt and decrypt serve both: the algorithm
+// decides how the key argument is interpreted, so there is no second namespace
+// and no separate pair of functions to remember.
+func isAsymmetric(algorithm string) bool {
+	return strings.HasPrefix(algorithm, "rsa-oaep-")
+}
+
+func oaepHash(algorithm string) (hash.Hash, error) {
+	switch algorithm {
+	case "rsa-oaep-sha256":
+		return sha256.New(), nil
+	case "rsa-oaep-sha512":
+		return sha512.New(), nil
+	default:
+		return nil, fmt.Errorf("unknown algorithm %q; supported: %s", algorithm, asymEncAlgorithms)
+	}
+}
+
+// rsaEncrypt takes an SPKI public key, as generateKeyPair returns.
+func rsaEncrypt(algorithm string, keyDER []byte, data []byte) ([]byte, error) {
+	h, err := oaepHash(algorithm)
+	if err != nil {
+		return nil, err
+	}
+	keyAny, err := parsePublic(keyDER)
+	if err != nil {
+		return nil, err
+	}
+	pub, ok := keyAny.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("%s needs an rsa public key, got %T", algorithm, keyAny)
+	}
+	return rsa.EncryptOAEP(h, rand.Reader, pub, data, nil)
+}
+
+// rsaDecrypt takes a PKCS#8 private key, as generateKeyPair returns.
+func rsaDecrypt(algorithm string, keyDER []byte, data []byte) ([]byte, error) {
+	h, err := oaepHash(algorithm)
+	if err != nil {
+		return nil, err
+	}
+	keyAny, err := parsePrivate(keyDER)
+	if err != nil {
+		return nil, err
+	}
+	priv, ok := keyAny.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("%s needs an rsa private key, got %T", algorithm, keyAny)
+	}
+	plain, err := rsa.DecryptOAEP(h, rand.Reader, priv, data, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s decryption failed: %w", algorithm, err)
+	}
+	return plain, nil
 }
