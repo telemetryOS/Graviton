@@ -18,7 +18,7 @@ import (
 // overridden at build time with:
 //
 //	-ldflags "-X github.com/telemetryos/graviton/cmd/commands.Version=$(git describe --tags)"
-var Version = "v2.1.0"
+var Version = "v2.3.0"
 
 var rootCmd = &cobra.Command{
 	Use:     "graviton",
