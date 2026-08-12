@@ -1,0 +1,14 @@
+# Redis/Valkey example.
+#
+# Anything speaking the Redis wire protocol works (Valkey included). There are
+# no transactions: operations apply immediately and are not rolled back if the
+# body fails, so write migrations to be idempotent. Applied-migration tracking
+# lives in the graviton-migrations key.
+
+migrations_db = "cache"
+migrations_path = "./migrations"
+
+[[databases]]
+name = "cache"
+kind = "redis"
+connection_url = "redis://localhost:6379/0"

@@ -6,9 +6,12 @@ import (
 	"os"
 
 	"github.com/telemetryos/graviton/config"
+	"github.com/telemetryos/graviton/driver/fs"
 	"github.com/telemetryos/graviton/driver/mongodb"
 	"github.com/telemetryos/graviton/driver/mysql"
 	"github.com/telemetryos/graviton/driver/postgresql"
+	"github.com/telemetryos/graviton/driver/redis"
+	"github.com/telemetryos/graviton/driver/s3"
 	"github.com/telemetryos/graviton/driver/sqlite"
 	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
 
@@ -25,6 +28,22 @@ type Driver interface {
 	Disconnect(ctx context.Context) error
 	GetAppliedMigrationsMetadata(ctx context.Context) ([]*migrationsmeta.MigrationMetadata, error)
 	SetAppliedMigrationsMetadata(ctx context.Context, migrationsMetadata []*migrationsmeta.MigrationMetadata) error
+
+	// AcquireMigrationsLock atomically claims the whole-run migrations lock in
+	// this driver's tracking storage (a sibling of the applied-migrations
+	// list). When the lock is already taken it returns the current holder and
+	// a nil error; the caller formats the user-facing message. Lock operations
+	// are immediate — they never join a migration transaction.
+	AcquireMigrationsLock(ctx context.Context, lock *migrationsmeta.MigrationsLock) (held *migrationsmeta.MigrationsLock, err error)
+	// ReleaseMigrationsLock releases the lock if (and only if) holder still
+	// owns it, so a run cannot release a lock that was force-cleared and
+	// re-acquired by another run.
+	ReleaseMigrationsLock(ctx context.Context, holder string) error
+	// GetMigrationsLock returns the current lock, or nil when none is held.
+	GetMigrationsLock(ctx context.Context) (*migrationsmeta.MigrationsLock, error)
+	// ClearMigrationsLock unconditionally removes the lock. It backs
+	// `graviton unlock`, the escape hatch for locks left by crashed runs.
+	ClearMigrationsLock(ctx context.Context) error
 
 	// BeginTx opens a transaction if one is not already open. It is idempotent:
 	// the JS-facing handles lazily begin a transaction on their first operation,
@@ -51,6 +70,25 @@ type Driver interface {
 	MaybeIntoJSValue(ctx context.Context, runtime *goja.Runtime, value any) (goja.Value, bool)
 }
 
+// ValidateDatabaseConfig statically checks one [[databases]] entry beyond the
+// structural checks config.Validate performs — currently the per-kind
+// connection URL shape for the kinds whose URLs parse without a connection.
+// Commands run it before connecting so config mistakes fail fast with a
+// pointed message instead of a connection error.
+func ValidateDatabaseConfig(conf *config.DatabaseConfig) error {
+	var err error
+	switch conf.Kind {
+	case config.DatabaseKindS3:
+		err = s3.ValidateConfig(conf)
+	case config.DatabaseKindRedis:
+		err = redis.ValidateConfig(conf)
+	}
+	if err != nil {
+		return fmt.Errorf("database %q: %w", conf.Name, err)
+	}
+	return nil
+}
+
 // FromDatabaseConfig builds the driver for conf.
 func FromDatabaseConfig(conf *config.DatabaseConfig) Driver {
 	if conf == nil {
@@ -67,6 +105,12 @@ func FromDatabaseConfig(conf *config.DatabaseConfig) Driver {
 		return mysql.New(conf)
 	case config.DatabaseKindSQLite:
 		return sqlite.New(conf)
+	case config.DatabaseKindFS:
+		return fs.New(conf)
+	case config.DatabaseKindS3:
+		return s3.New(conf)
+	case config.DatabaseKindRedis:
+		return redis.New(conf)
 	default:
 		fmt.Println("Unknown database kind: " + string(conf.Kind))
 		os.Exit(1)

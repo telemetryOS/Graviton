@@ -38,6 +38,9 @@ var upCmd = &cobra.Command{
 		run := connectRun(conf)
 		defer run.Disconnect()
 
+		lockRun(run)
+		defer run.Unlock()
+
 		applyMigrations, err := run.GetPending()
 		if err != nil {
 			if err, ok := err.(*migrations.BuildScriptError); ok {

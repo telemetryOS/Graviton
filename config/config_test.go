@@ -166,3 +166,64 @@ func withWorkingDir(t *testing.T, dir string) {
 	}
 	t.Cleanup(func() { os.Chdir(orig) })
 }
+
+func Test_Validate_DuplicateNames(t *testing.T) {
+	conf := &Config{
+		MigrationsDb: "main",
+		Databases:    []*DatabaseConfig{mongo("main", "a"), mongo("main", "b")},
+	}
+	err := conf.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unique") {
+		t.Errorf("Validate() = %v, want duplicate-name error", err)
+	}
+}
+
+func Test_Validate_UnnamedDatabase(t *testing.T) {
+	conf := &Config{
+		MigrationsDb: "main",
+		Databases:    []*DatabaseConfig{mongo("main", "a"), mongo("", "b")},
+	}
+	err := conf.Validate()
+	if err == nil || !strings.Contains(err.Error(), "no name") {
+		t.Errorf("Validate() = %v, want unnamed-entry error", err)
+	}
+}
+
+func Test_Validate_UnknownKind(t *testing.T) {
+	conf := &Config{
+		MigrationsDb: "main",
+		Databases: []*DatabaseConfig{
+			{Name: "main", Kind: "oracle", ConnectionUrl: "oracle://x"},
+		},
+	}
+	err := conf.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unknown kind") || !strings.Contains(err.Error(), "redis") {
+		t.Errorf("Validate() = %v, want unknown-kind error listing supported kinds", err)
+	}
+}
+
+func Test_Validate_MissingConnectionUrl(t *testing.T) {
+	conf := &Config{
+		MigrationsDb: "main",
+		Databases: []*DatabaseConfig{
+			{Name: "main", Kind: DatabaseKindPostgreSQL},
+		},
+	}
+	err := conf.Validate()
+	if err == nil || !strings.Contains(err.Error(), "connection_url") {
+		t.Errorf("Validate() = %v, want missing-connection_url error", err)
+	}
+}
+
+func Test_Validate_StoreKindWithDatabaseName(t *testing.T) {
+	conf := &Config{
+		MigrationsDb: "files",
+		Databases: []*DatabaseConfig{
+			{Name: "files", Kind: DatabaseKindFS, ConnectionUrl: "./store", DatabaseName: "oops"},
+		},
+	}
+	err := conf.Validate()
+	if err == nil || !strings.Contains(err.Error(), "database_name") {
+		t.Errorf("Validate() = %v, want database_name-unused error", err)
+	}
+}

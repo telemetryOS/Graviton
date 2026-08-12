@@ -8,6 +8,7 @@ import (
 
 	"github.com/telemetryos/graviton/assets"
 	"github.com/telemetryos/graviton/config"
+	"github.com/telemetryos/graviton/driver"
 	"github.com/telemetryos/graviton/migrations"
 
 	"github.com/spf13/cobra"
@@ -48,6 +49,12 @@ func assertConfig() *config.Config {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
+	for _, databaseConf := range conf.Databases {
+		if err := driver.ValidateDatabaseConfig(databaseConf); err != nil {
+			fmt.Println(err.Error())
+			os.Exit(1)
+		}
+	}
 
 	return conf
 }
@@ -60,6 +67,18 @@ func connectRun(conf *config.Config) *migrations.Run {
 		panic(err)
 	}
 	return run
+}
+
+// lockRun claims the whole-run migrations lock for a command that runs
+// migration bodies, exiting cleanly when another run holds it. Callers defer
+// run.Unlock(); command failures surface as panics, which unwind defers, so
+// the lock is released on both success and failure paths.
+func lockRun(run *migrations.Run) {
+	if err := run.Lock(); err != nil {
+		fmt.Println(err.Error())
+		run.Disconnect()
+		os.Exit(1)
+	}
 }
 
 func pendingMigrationNamesWithPrefix(conf *config.Config, prefix string) []string {

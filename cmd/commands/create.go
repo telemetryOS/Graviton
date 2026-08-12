@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/telemetryos/graviton/driver/mongodb"
 	"github.com/telemetryos/graviton/migrations"
 
 	"github.com/spf13/cobra"
@@ -43,12 +42,12 @@ var createCmd = &cobra.Command{
 			}
 
 			typeDefPath := filepath.Join(migrationsDir, "migration.d.ts")
-			if err := os.WriteFile(typeDefPath, mongodb.MigrationTypeDefTemplate, 0644); err != nil {
+			if err := os.WriteFile(typeDefPath, migrations.MigrationTypeDefTemplate, 0644); err != nil {
 				panic(err)
 			}
 		}
 
-		if err := os.WriteFile(migrationPath, mongodb.MigrationTemplate, 0644); err != nil {
+		if err := os.WriteFile(migrationPath, migrations.MigrationTemplate, 0644); err != nil {
 			panic(err)
 		}
 	},

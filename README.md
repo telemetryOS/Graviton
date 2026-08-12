@@ -6,7 +6,7 @@
 
 > The creator of light - forged in the limitless void
 
-Graviton is a database-agnostic migration tool. Manage schema changes across MongoDB, PostgreSQL, MySQL, and SQLite using a single tool and consistent workflow. Write migrations in TypeScript and let Graviton handle execution, transaction management, and migration tracking regardless of which database you're using.
+Graviton is a database-agnostic migration tool. Manage schema changes across MongoDB, PostgreSQL, MySQL, and SQLite — plus file and key-value stores (local filesystem, S3, Redis/Valkey) — using a single tool and consistent workflow. Write migrations in TypeScript and let Graviton handle execution, transaction management, and migration tracking regardless of which database you're using.
 
 Most migration tools lock you into a single database technology. Graviton lets you use the right database for each part of your application while managing all migrations from one place with one command-line interface.
 
@@ -19,7 +19,18 @@ Graviton provides first-class support for four database systems, covering both S
 - **MySQL** - World's most popular open-source relational database
 - **SQLite** - Serverless, embedded SQL database
 
-Additionally, Graviton is compatible with database systems that use the same wire protocols: MariaDB works with the MySQL driver, and CockroachDB works with the PostgreSQL driver.
+Beyond databases, Graviton also migrates stores, so file layouts and cached
+key-value state can evolve in the same linear migration set as the rows that
+reference them:
+
+- **fs** - A local filesystem directory (read, write, move, delete files)
+- **s3** - An S3 bucket or prefix (get, put, copy, list, delete objects)
+- **redis** - A Redis key-value store (strings, hashes, TTLs, any command)
+
+Additionally, Graviton is compatible with systems that use the same wire
+protocols or APIs: MariaDB works with the MySQL driver, CockroachDB works with
+the PostgreSQL driver, Valkey works with the Redis driver, and S3-compatible
+stores (MinIO, Cloudflare R2, DigitalOcean Spaces, …) work with the S3 driver.
 
 ## Installation
 
@@ -150,9 +161,9 @@ speaks its own kind's surface (`collection()` for MongoDB, `exec()`/`query()`/
 When a database is fully cut over and no longer used, a migration can retire it
 by renaming it out of the way rather than dropping it outright. `rename(newName)`
 on a database-bound handle renames that database to `newName` — a **literal
-physical name**, not a config alias — and drops the emptied source. The
-convention is a `__migrated__` suffix so the retired data is obvious and
-recoverable:
+physical name**, not a config alias: a MongoDB database name, an fs filesystem
+path, or an s3 key prefix — and drops the emptied source. The convention is a
+`__migrated__` suffix so the retired data is obvious and recoverable:
 
 ```typescript
 export function up(g: Handle) {
@@ -166,9 +177,14 @@ export function down(g: Handle) {
 }
 ```
 
-MongoDB has no native database rename, so `rename` renames every non-system
-collection to the target database with `renameCollection`, verifies the source
-has no collections left, and drops it. It runs on the same cluster (one client).
+Per kind: MongoDB has no native database rename, so `rename` renames every
+non-system collection to the target database with `renameCollection`, verifies
+the source has no collections left, and drops it (same cluster, one client).
+An fs database renames its root directory with one atomic filesystem move
+(same filesystem only). An s3 database moves its configured key prefix by
+server-side copying every object to the new prefix and then deleting the
+sources — a database without a key prefix cannot be renamed, since a bucket
+has no rename.
 
 **Caveats — read before using it:**
 
@@ -178,13 +194,18 @@ has no collections left, and drops it. It runs on the same cluster (one client).
   retire-databases migration dedicated to `rename` — do not mix it with
   transactional collection writes.
 - **It is irreversible except by renaming back.** The source database is dropped
-  once its collections have moved. To reverse it, `down()` renames the retired
+  once its contents have moved. To reverse it, `down()` renames the retired
   database back (see above).
-- **No silent clobbering.** If a target collection already exists the rename
-  errors loudly rather than overwriting it.
+- **No silent clobbering.** If the target (a collection, path, or prefix)
+  already exists, the rename errors loudly rather than overwriting it.
 - **It refuses unsafe targets.** Renaming the `migrations_db`, or a database that
   has an open transaction in the current run, errors cleanly.
-- **`rename` is MongoDB-only.** SQL databases do not support it.
+- **The s3 rename is additionally non-atomic.** It is a mass copy followed by
+  deletes; a failure mid-way leaves some objects copied and none deleted, and
+  re-running converges.
+- **`rename` is supported for mongodb, fs, and s3.** SQL and redis databases do
+  not support it (for redis, rename key namespaces with `keys()` +
+  `command('RENAME', …)` instead).
 
 Because `rename` addresses its source by the bound handle's alias, a `down()`
 that renames the retired database back needs that database reachable by an alias.
@@ -256,6 +277,78 @@ db.exec(sql`SELECT * FROM users WHERE name = ${name}`)
 // Params: ['Alice']
 ```
 
+### Store Migrations (fs, s3, redis)
+
+Store databases participate in migrations exactly like the others — select them
+with `use(alias)` (or directly on the root handle in a single-database project)
+and call their kind's surface. This makes coordinated data/file moves ordinary
+migrations: relocate uploaded assets while rewriting the rows that reference
+them, or rename cache namespaces alongside a schema change.
+
+```typescript
+export function up(g: Handle) {
+  // Move each user's avatar into the new layout and update the row.
+  for (const user of g.use('accounts').collection('users').find({})) {
+    if (user.avatarPath) {
+      const newPath = `avatars/${user._id}.png`
+      g.use('uploads').move(user.avatarPath, newPath)
+      g.use('accounts').collection('users').updateOne(
+        { _id: user._id },
+        { $set: { avatarPath: newPath } }
+      )
+    }
+  }
+
+  // Invalidate the cached profiles that embedded the old paths.
+  g.use('cache').del(...g.use('cache').keys('profile:*'))
+}
+```
+
+**fs** — the database is a root directory; paths are slash-separated and
+sandboxed to it (`..` escapes fail the migration):
+`read`/`readBytes`/`write`/`remove`/`removeAll`/`mkdir`/`list`/`exists`/`copy`/`move`.
+
+**s3** — the database is a bucket, optionally under a key prefix; keys are
+relative to that prefix: `get`/`getBytes`/`put`/`delete`/`list`/`exists`/
+`copy`/`move`. `list(prefix)` treats the prefix as a folder path and follows
+pagination.
+
+**redis** — strings (`get`/`set` with optional TTL seconds/`del`/`keys`/
+`exists`/`expire`/`ttl`), hashes (`hGet`/`hSet`/`hGetAll`/`hDel`), sets
+(`sAdd`/`sRem`/`sMembers`/`sIsMember`), lists (`lPush`/`rPush`/`lRange`/
+`lLen`), sorted sets (`zAdd`/`zRem`/`zRange`/`zScore`), counters
+(`incr`/`incrBy`), plus `command(...)` for any Redis command verbatim
+(`command('SETBIT', 'flags', 7, 1)`). `keys()` iterates with SCAN rather than
+KEYS, so running against a large production store never blocks the server.
+
+Binary content round-trips between file-like stores as `ArrayBuffer`:
+`readBytes()`/`getBytes()` return one and `write()`/`put()` accept one, so
+`g.use('bucket').put(key, g.use('files').readBytes(path))` copies bytes
+faithfully.
+
+For **large files**, `copyTo(destAlias, src, dst)` streams one item from an fs
+or s3 database into another fs or s3 database in bounded memory — the
+`readBytes()`/`put()` round trip above holds the whole payload at once, while
+`copyTo` never does (s3 writes go through multipart upload as they grow):
+
+```typescript
+export function up(g: Handle) {
+  for (const entry of g.use('files').list('videos')) {
+    g.use('files').copyTo('bucket', `videos/${entry.name}`, `videos/${entry.name}`)
+  }
+}
+```
+
+**Store operations are immediate and non-transactional.** Filesystems and
+object stores have no transactions, and Redis MULTI/EXEC cannot serve the
+read-then-write pattern migrations rely on, so these three kinds apply every
+operation as it executes. If the migration body fails afterwards, store writes
+that already happened are **not** rolled back — the migration is simply left
+unmarked and re-runs. This is the same recovery model as everything else in
+Graviton (see [Migration Model](#migration-model)): write store migrations to
+be idempotent/convergent, and prefer keeping heavy store work in dedicated
+migrations rather than mixing it with transactional database writes.
+
 ## Configuration
 
 ### Configuration File Format
@@ -290,9 +383,9 @@ Each `[[databases]]` entry requires a name for identification, a kind specifying
 Configuration Field | Description
 --------------------|------------
 `name` | Alias used by `use(alias)` and by `migrations_db`
-`kind` | Database type: `mongodb`, `postgresql`, `mysql`, or `sqlite`
+`kind` | Database type: `mongodb`, `postgresql`, `mysql`, `sqlite`, `fs`, `s3`, or `redis`
 `connection_url` | Database connection string (format varies by database)
-`database_name` | Name of the database to use
+`database_name` | Name of the database to use (unused by `fs`, `s3`, and `redis` — their connection URL carries the target)
 
 ### Connection URLs
 
@@ -310,6 +403,17 @@ connection_url = "file:./database.db?cache=shared&mode=rwc"
 
 # MongoDB
 connection_url = "mongodb://user:pass@host:port"
+
+# fs — the root directory (absolute, or relative to the working directory)
+connection_url = "./store"
+
+# s3 — bucket, optional key prefix, and options; credentials come from the
+# standard AWS chain unless access-key/secret-key query params are given
+# (endpoint/path-style enable MinIO, R2, and other S3-compatibles)
+connection_url = "s3://my-bucket/app-assets?region=us-east-1"
+
+# redis (or Valkey)
+connection_url = "redis://user:pass@host:6379/0"
 ```
 
 ### Multi-Database Projects
@@ -365,6 +469,22 @@ If a data commit fails, still-open transactions roll back, already-committed
 databases stay committed, and the marker is **not** written. If the body errors
 or panics, all open transactions roll back and no marker is written.
 
+### The Migrations Lock
+
+Commands that run migration bodies (`up`, `down`, `set-head`) first claim a
+whole-run lock in `migrations_db`, next to the applied-migrations tracking
+data — a `graviton-migrations-lock` collection/table, a
+`graviton-migrations.lock` file/object, or a `graviton-migrations-lock` key,
+depending on the tracking database's kind. One lock guards the whole project no
+matter how many databases are configured, so two concurrent runs cannot
+interleave migration bodies or clobber the tracking list; the second run exits
+immediately, reporting who holds the lock and since when.
+
+The lock is released when the run finishes, on success and failure alike. Only
+a run that dies hard (kill -9, power loss) leaves it behind — clear that with
+`graviton unlock` once you have confirmed the run is really dead. `status` is
+read-only and takes no lock.
+
 ### Recovery Model: Idempotency + Re-run
 
 Cross-database atomicity is **per handle, not joint** — this is deliberate.
@@ -385,6 +505,13 @@ Databases no longer need to share a cluster, and their kinds can differ. Each
 `use(alias)` handle transacts within its own kind (a MongoDB transaction for a
 `mongodb` entry, a SQL transaction for a SQL entry). The marker is written in
 whatever kind `migrations_db` is.
+
+The store kinds (`fs`, `s3`, `redis`) have no transactions at all: their
+operations apply immediately and are never rolled back (see
+[Store Migrations](#store-migrations-fs-s3-redis)). They still fit the same
+recovery model — a failed body leaves the migration unmarked, so it re-runs —
+and any of them can serve as `migrations_db` (the tracking list is stored as a
+`graviton-migrations.json` file/object, or a `graviton-migrations` key).
 
 ## Commands
 
@@ -436,6 +563,20 @@ The create command generates a new migration file with the current timestamp and
 ```bash
 graviton create add-users-table
 # Creates: migrations/20240106123045-add-users-table.migration.ts
+```
+
+### unlock
+
+The unlock command clears the whole-run migrations lock (see
+[The Migrations Lock](#the-migrations-lock)) after a run died without releasing
+it. It prints who held the lock and since when, then removes it. Never unlock
+while a migration run is still alive — the lock is what keeps concurrent runs
+from corrupting migration tracking.
+
+```bash
+graviton unlock
+# Clearing migrations lock held by ci-runner-3 (pid 4242) since 2024-01-06T12:30:45Z
+# Migrations lock cleared
 ```
 
 ### upgrade
@@ -542,6 +683,80 @@ const user = db.queryOne<User>(sql`SELECT * FROM users WHERE id = ${id}`)
 // user: User | null
 ```
 
+### Store API
+
+The store kinds share the same `use(alias)` handle model. All operations are
+immediate and non-transactional (see
+[Store Migrations](#store-migrations-fs-s3-redis)).
+
+```typescript
+interface FileEntry {
+  name: string
+  isDir: boolean
+  size: number
+}
+
+// fs — paths are slash-separated and relative to the configured root
+interface FsDbHandle {
+  read(path: string): string
+  readBytes(path: string): ArrayBuffer
+  write(path: string, data: string | ArrayBuffer): void
+  remove(path: string): void        // one file or empty directory
+  removeAll(path: string): void     // recursive; missing paths are fine
+  mkdir(path: string): void
+  list(path: string): FileEntry[]
+  exists(path: string): boolean
+  copy(src: string, dst: string): void
+  move(src: string, dst: string): void
+  rename(newName: string): void     // retire: move the root directory
+  copyTo(destAlias: string, src: string, dst: string): void  // stream to fs/s3
+}
+
+// s3 — keys are relative to the configured bucket prefix
+interface S3DbHandle {
+  get(key: string): string          // fails on a missing key
+  getBytes(key: string): ArrayBuffer
+  put(key: string, data: string | ArrayBuffer): void
+  delete(key: string): void         // missing keys are fine (S3 semantics)
+  list(prefix: string): string[]    // folder-path prefix; '' lists everything
+  exists(key: string): boolean
+  copy(src: string, dst: string): void
+  move(src: string, dst: string): void
+  rename(newPrefix: string): void   // retire: move the key prefix (non-atomic)
+  copyTo(destAlias: string, src: string, dst: string): void  // stream to fs/s3
+}
+
+// redis — also Valkey
+interface RedisDbHandle {
+  get(key: string): string | null   // null on a miss
+  set(key: string, value: any, ttlSeconds?: number): void
+  del(...keys: string[]): number
+  keys(pattern: string): string[]   // SCAN-based; never blocks the server
+  exists(key: string): boolean
+  expire(key: string, seconds: number): boolean
+  ttl(key: string): number          // -1 no expiry, -2 missing
+  hGet(key: string, field: string): string | null
+  hSet(key: string, field: string, value: any): void
+  hGetAll(key: string): Record<string, string>
+  hDel(key: string, ...fields: string[]): number
+  sAdd(key: string, ...members: any[]): number
+  sRem(key: string, ...members: any[]): number
+  sMembers(key: string): string[]
+  sIsMember(key: string, member: any): boolean
+  lPush(key: string, ...values: any[]): number
+  rPush(key: string, ...values: any[]): number
+  lRange(key: string, start: number, stop: number): string[]
+  lLen(key: string): number
+  zAdd(key: string, score: number, member: string): boolean
+  zRem(key: string, ...members: any[]): number
+  zRange(key: string, start: number, stop: number): string[]
+  zScore(key: string, member: string): number | null
+  incr(key: string): number
+  incrBy(key: string, delta: number): number
+  command(...args: any[]): any      // any Redis command verbatim
+}
+```
+
 ## Best Practices
 
 ### Keep Migrations Focused
@@ -625,6 +840,8 @@ The `example/` directory contains ready-to-read projects in the current
 
 - `example/mongodb-migrations`, `example/postgresql-migrations`,
   `example/sqlite-migrations` — single-database projects.
+- `example/fs-migrations`, `example/s3-migrations`, `example/redis-migrations`
+  — single-store projects (file layouts and key-value state).
 - `example/multi-database-migrations` — two MongoDB databases addressed with
   `use(alias)` from one linear migration set.
 
@@ -647,7 +864,7 @@ go build -o graviton ./cmd/graviton
 
 ### Running Tests
 
-Graviton includes comprehensive test coverage for all drivers. MongoDB tests require a MongoDB replica set running on localhost. PostgreSQL tests require PostgreSQL on localhost. MySQL tests require MySQL on localhost. SQLite tests use temporary files and require no external services.
+Graviton includes comprehensive test coverage for all drivers. MongoDB tests require a MongoDB replica set running on localhost. PostgreSQL tests require PostgreSQL on localhost. MySQL tests require MySQL on localhost. SQLite and fs tests use temporary files and require no external services. Redis tests require a Redis/Valkey on localhost (they use logical database 15; `GRAVITON_TEST_REDIS_URL` overrides the target). S3 tests run against an in-memory fake; set `GRAVITON_TEST_S3_URL` to also exercise a real S3-compatible endpoint such as a local MinIO. Tests whose backing service is unavailable skip rather than fail.
 
 ```bash
 # All tests

@@ -3,10 +3,12 @@ package migrations
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/telemetryos/graviton/config"
 	"github.com/telemetryos/graviton/driver"
@@ -25,6 +27,10 @@ type Run struct {
 	conf    *config.Config
 	drivers map[string]driver.Driver
 	order   []string
+
+	// lock is the whole-run migrations lock this run holds in the tracking
+	// database, nil until Lock succeeds.
+	lock *migrationsmeta.MigrationsLock
 }
 
 func NewRun(ctx context.Context, conf *config.Config) *Run {
@@ -63,6 +69,67 @@ func (r *Run) trackingDriver() driver.Driver {
 	return r.drivers[r.conf.MigrationsDb]
 }
 
+// Lock claims the whole-run migrations lock in the tracking database. One lock
+// guards the whole project — commands that run migration bodies (up, down,
+// set-head) take it after connecting and release it when they finish, so two
+// concurrent runs cannot interleave bodies or clobber the tracking list.
+func (r *Run) Lock() error {
+	lock := migrationsmeta.NewMigrationsLock()
+	held, err := r.trackingDriver().AcquireMigrationsLock(r.ctx, lock)
+	if err != nil {
+		return fmt.Errorf("failed to acquire the migrations lock: %w", err)
+	}
+	if held != nil {
+		return fmt.Errorf(
+			"migrations are locked by %s (pid %d) since %s; if that run is no longer alive, clear the lock with `graviton unlock`",
+			held.Hostname, held.Pid, held.AcquiredAt.Local().Format(time.RFC3339),
+		)
+	}
+	r.lock = lock
+	return nil
+}
+
+// Unlock releases the lock taken by Lock. It is a no-op when this run holds no
+// lock, and it never releases another run's lock (release is conditional on
+// the holder id).
+func (r *Run) Unlock() {
+	if r.lock == nil {
+		return
+	}
+	if err := r.trackingDriver().ReleaseMigrationsLock(r.ctx, r.lock.Holder); err != nil {
+		fmt.Println("WARN: failed to release the migrations lock: " + err.Error())
+		return
+	}
+	r.lock = nil
+}
+
+// LockInfo returns the currently held migrations lock, or nil when free.
+func (r *Run) LockInfo() (*migrationsmeta.MigrationsLock, error) {
+	return r.trackingDriver().GetMigrationsLock(r.ctx)
+}
+
+// ClearLock unconditionally removes the migrations lock. It backs
+// `graviton unlock`, the recovery path for locks left by crashed runs.
+func (r *Run) ClearLock() error {
+	return r.trackingDriver().ClearMigrationsLock(r.ctx)
+}
+
+// ConnectTracking connects only the migrations_db database. Lock inspection
+// and clearing need just the tracking storage, and must keep working when an
+// unrelated database is unreachable.
+func (r *Run) ConnectTracking() error {
+	alias := r.conf.MigrationsDb
+	if err := r.drivers[alias].Connect(r.ctx); err != nil {
+		return fmt.Errorf("failed to connect to database %q: %w", alias, err)
+	}
+	return nil
+}
+
+// DisconnectTracking disconnects the sole database ConnectTracking opened.
+func (r *Run) DisconnectTracking() {
+	r.drivers[r.conf.MigrationsDb].Disconnect(r.ctx)
+}
+
 func (r *Run) driversList() []driver.Driver {
 	list := make([]driver.Driver, 0, len(r.order))
 	for _, alias := range r.order {
@@ -74,10 +141,10 @@ func (r *Run) driversList() []driver.Driver {
 // Handle is the migration-facing root handle (__g__). It carries an optional
 // bound database: use(alias) returns a new Handle bound to that database, and in
 // a single-database project the root Handle is already bound to the only
-// configured database — so collection() (or the SQL surface) works without
-// use(). When unbound (a multi-database project's root, before use()), a direct
-// operation errors and directs the caller to use(alias). Operations delegate to
-// the bound driver's kind-appropriate native handle.
+// configured database — so collection() (or the SQL or store surface) works
+// without use(). When unbound (a multi-database project's root, before use()), a
+// direct operation errors and directs the caller to use(alias). Operations
+// delegate to the bound driver's kind-appropriate native handle.
 type Handle struct {
 	ctx   context.Context
 	run   *Run
@@ -97,8 +164,9 @@ func (h *Handle) Use(alias string) *Handle {
 }
 
 // databaseRenamer is implemented by driver kinds that support renaming a whole
-// database (currently only mongodb). It renames the driver's own database to a
-// literal physical newName as an immediate, non-transactional operation.
+// database (mongodb, fs, and s3). It renames the driver's own database to a
+// literal physical newName — a database name, a filesystem path, or a bucket
+// key prefix respectively — as an immediate, non-transactional operation.
 type databaseRenamer interface {
 	RenameDatabase(ctx context.Context, newName string) error
 }
@@ -110,11 +178,12 @@ type databaseRenamer interface {
 // database to a __migrated__-suffixed name at cutover, and its down() renames it
 // back.
 //
-// newName is not resolved through config — it is a deliberate literal, so the
-// renamed database leaves config-managed space. Renaming from an unbound
+// newName is not resolved through config — it is a deliberate literal (a
+// mongodb database name, an fs path, or an s3 key prefix), so the renamed
+// database leaves config-managed space. Renaming from an unbound
 // multi-database root (before use(alias)), renaming the migrations_db, or
 // renaming a database with an open transaction on this run errors cleanly.
-// rename is only supported for mongodb databases.
+// rename is supported for mongodb, fs, and s3 databases.
 //
 // It is immediate and irreversible except by renaming back: it does not run in
 // (and is not rolled back with) the migration's transactions, so if the body
@@ -132,9 +201,61 @@ func (h *Handle) Rename(newName string) {
 	}
 	renamer, ok := h.drv.(databaseRenamer)
 	if !ok {
-		panic(fmt.Errorf("rename is not supported for database %q; only mongodb databases can be renamed", h.alias))
+		panic(fmt.Errorf("rename is not supported for database %q; only mongodb, fs, and s3 databases can be renamed", h.alias))
 	}
 	if err := renamer.RenameDatabase(h.ctx, newName); err != nil {
+		panic(err)
+	}
+}
+
+// streamReader is implemented by driver kinds whose stores can open a
+// streaming reader over one item (fs, s3).
+type streamReader interface {
+	OpenRead(ctx context.Context, path string) (io.ReadCloser, error)
+}
+
+// streamWriter is implemented by driver kinds whose stores can write one item
+// from a stream in bounded memory (fs, s3).
+type streamWriter interface {
+	WriteStream(ctx context.Context, path string, r io.Reader) error
+}
+
+// CopyTo streams one item from this handle's database into destAlias's
+// database without buffering the whole payload in memory — the way to move
+// large files between file-like stores (fs ↔ s3), where read()/write() would
+// hold the entire content at once. Like every store operation it is immediate
+// and non-transactional.
+func (h *Handle) CopyTo(destAlias string, src string, dst string) {
+	if h.drv == nil {
+		panic(fmt.Errorf(
+			"multiple databases are configured (%s); call use(alias) to select the source before copyTo()",
+			strings.Join(h.run.order, ", "),
+		))
+	}
+	source, ok := h.drv.(streamReader)
+	if !ok {
+		panic(fmt.Errorf("copyTo() is not available on database %q; the source must be an fs or s3 database", h.alias))
+	}
+
+	destDriver, ok := h.run.drivers[destAlias]
+	if !ok {
+		panic(fmt.Errorf(
+			"no database aliased %q is configured; configured databases: %s",
+			destAlias, strings.Join(h.run.order, ", "),
+		))
+	}
+	dest, ok := destDriver.(streamWriter)
+	if !ok {
+		panic(fmt.Errorf("copyTo() cannot write to database %q; the destination must be an fs or s3 database", destAlias))
+	}
+
+	reader, err := source.OpenRead(h.ctx, src)
+	if err != nil {
+		panic(err)
+	}
+	defer reader.Close()
+
+	if err := dest.WriteStream(h.ctx, dst, reader); err != nil {
 		panic(err)
 	}
 }
@@ -143,6 +264,95 @@ func (h *Handle) Collection(name string) any { return h.delegate("Collection", n
 func (h *Handle) Exec(query any) any         { return h.delegate("Exec", query) }
 func (h *Handle) Query(query any) any        { return h.delegate("Query", query) }
 func (h *Handle) QueryOne(query any) any     { return h.delegate("QueryOne", query) }
+
+// File-like surfaces (fs, s3). Shared names delegate to whichever of the two
+// kinds the handle is bound to; a method the bound kind lacks errors clearly.
+func (h *Handle) Read(path string) any            { return h.delegate("Read", path) }
+func (h *Handle) ReadBytes(path string) any       { return h.delegate("ReadBytes", path) }
+func (h *Handle) Write(path string, data any) any { return h.delegate("Write", path, data) }
+func (h *Handle) Remove(path string) any          { return h.delegate("Remove", path) }
+func (h *Handle) RemoveAll(path string) any       { return h.delegate("RemoveAll", path) }
+func (h *Handle) Mkdir(path string) any           { return h.delegate("Mkdir", path) }
+func (h *Handle) List(path string) any            { return h.delegate("List", path) }
+func (h *Handle) Exists(path string) any          { return h.delegate("Exists", path) }
+func (h *Handle) Copy(src, dst string) any        { return h.delegate("Copy", src, dst) }
+func (h *Handle) Move(src, dst string) any        { return h.delegate("Move", src, dst) }
+func (h *Handle) Put(key string, data any) any    { return h.delegate("Put", key, data) }
+func (h *Handle) GetBytes(key string) any         { return h.delegate("GetBytes", key) }
+func (h *Handle) Delete(key string) any           { return h.delegate("Delete", key) }
+
+// Key-value surface (redis). Get is shared with the s3 surface. Ttl (not TTL)
+// keeps the JS name ttl — only a method's first letter is lowercased when it is
+// surfaced to scripts.
+func (h *Handle) Get(key string) any { return h.delegate("Get", key) }
+func (h *Handle) Set(key string, value any, ttlSeconds ...int64) any {
+	args := []any{key, value}
+	for _, ttl := range ttlSeconds {
+		args = append(args, ttl)
+	}
+	return h.delegate("Set", args...)
+}
+func (h *Handle) Del(keys ...string) any {
+	args := make([]any, len(keys))
+	for i, key := range keys {
+		args[i] = key
+	}
+	return h.delegate("Del", args...)
+}
+func (h *Handle) Keys(pattern string) any        { return h.delegate("Keys", pattern) }
+func (h *Handle) Expire(key string, s int64) any { return h.delegate("Expire", key, s) }
+func (h *Handle) Ttl(key string) any             { return h.delegate("Ttl", key) }
+func (h *Handle) HGet(key, field string) any     { return h.delegate("HGet", key, field) }
+func (h *Handle) HSet(key, field string, value any) any {
+	return h.delegate("HSet", key, field, value)
+}
+func (h *Handle) HGetAll(key string) any { return h.delegate("HGetAll", key) }
+func (h *Handle) HDel(key string, fields ...string) any {
+	args := []any{key}
+	for _, field := range fields {
+		args = append(args, field)
+	}
+	return h.delegate("HDel", args...)
+}
+func (h *Handle) SAdd(key string, members ...any) any {
+	return h.delegate("SAdd", keyed(key, members)...)
+}
+func (h *Handle) SRem(key string, members ...any) any {
+	return h.delegate("SRem", keyed(key, members)...)
+}
+func (h *Handle) SMembers(key string) any         { return h.delegate("SMembers", key) }
+func (h *Handle) SIsMember(key string, m any) any { return h.delegate("SIsMember", key, m) }
+func (h *Handle) LPush(key string, values ...any) any {
+	return h.delegate("LPush", keyed(key, values)...)
+}
+func (h *Handle) RPush(key string, values ...any) any {
+	return h.delegate("RPush", keyed(key, values)...)
+}
+func (h *Handle) LRange(key string, start, stop int64) any {
+	return h.delegate("LRange", key, start, stop)
+}
+func (h *Handle) LLen(key string) any { return h.delegate("LLen", key) }
+func (h *Handle) ZAdd(key string, score float64, member string) any {
+	return h.delegate("ZAdd", key, score, member)
+}
+func (h *Handle) ZRem(key string, members ...any) any {
+	return h.delegate("ZRem", keyed(key, members)...)
+}
+func (h *Handle) ZRange(key string, start, stop int64) any {
+	return h.delegate("ZRange", key, start, stop)
+}
+func (h *Handle) ZScore(key string, member string) any { return h.delegate("ZScore", key, member) }
+func (h *Handle) Incr(key string) any                  { return h.delegate("Incr", key) }
+func (h *Handle) IncrBy(key string, delta int64) any   { return h.delegate("IncrBy", key, delta) }
+func (h *Handle) Command(args ...any) any              { return h.delegate("Command", args...) }
+
+// keyed returns the flat argument list for an operation taking a key and a
+// variadic tail, the shape delegate forwards.
+func keyed(key string, tail []any) []any {
+	args := make([]any, 0, len(tail)+1)
+	args = append(args, key)
+	return append(args, tail...)
+}
 
 // delegate forwards an operation to the bound database's native handle. An
 // unbound handle (multi-database root) errors, telling the caller to use(alias).
@@ -161,9 +371,10 @@ func (h *Handle) delegate(method string, args ...any) any {
 		jsName := strings.ToLower(method[:1]) + method[1:]
 		panic(fmt.Errorf("%s() is not available on database %q", jsName, h.alias))
 	}
+	mt := m.Type()
 	in := make([]reflect.Value, len(args))
 	for i, a := range args {
-		in[i] = reflect.ValueOf(a)
+		in[i] = argValue(mt, i, a)
 	}
 	out := m.Call(in)
 	if len(out) == 0 {

@@ -41,6 +41,9 @@ var downCmd = &cobra.Command{
 		run := connectRun(conf)
 		defer run.Disconnect()
 
+		lockRun(run)
+		defer run.Unlock()
+
 		var rollbackMigrations []*migrations.Migration
 		var err error
 		if useDownFnOnDisk {

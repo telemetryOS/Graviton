@@ -78,6 +78,15 @@ func (d *Driver) Connect(ctx context.Context) error {
 		return fmt.Errorf("failed to create migrations table: %w", err)
 	}
 
+	createLockSQL, err := d.renderSQL(createLockTableSQL)
+	if err != nil {
+		return fmt.Errorf("failed to render create lock table SQL: %w", err)
+	}
+
+	if _, err := d.db.ExecContext(ctx, createLockSQL); err != nil {
+		return fmt.Errorf("failed to create migrations lock table: %w", err)
+	}
+
 	return nil
 }
 
@@ -236,7 +245,8 @@ func (d *Driver) renderSQL(sqlTemplate string) (string, error) {
 
 	var buf bytes.Buffer
 	data := map[string]string{
-		"TableName": MIGRATIONS_TABLE,
+		"TableName":     MIGRATIONS_TABLE,
+		"LockTableName": MIGRATIONS_LOCK_TABLE,
 	}
 
 	if err := tmpl.Execute(&buf, data); err != nil {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -22,7 +23,43 @@ const (
 	DatabaseKindPostgreSQL DatabaseKind = "postgresql"
 	DatabaseKindMySQL      DatabaseKind = "mysql"
 	DatabaseKindSQLite     DatabaseKind = "sqlite"
+	// DatabaseKindFS is a local-filesystem store: connection_url is the root
+	// directory migration file operations are sandboxed to.
+	DatabaseKindFS DatabaseKind = "fs"
+	// DatabaseKindS3 is an S3(-compatible) object store: connection_url is
+	// s3://bucket[/prefix]?region=...&endpoint=...&path-style=true.
+	DatabaseKindS3 DatabaseKind = "s3"
+	// DatabaseKindRedis is a Redis or Valkey key-value store: connection_url is
+	// a redis:// URL.
+	DatabaseKindRedis DatabaseKind = "redis"
 )
+
+// databaseKinds is every kind Validate accepts, in documentation order.
+var databaseKinds = []DatabaseKind{
+	DatabaseKindMongoDB,
+	DatabaseKindPostgreSQL,
+	DatabaseKindMySQL,
+	DatabaseKindSQLite,
+	DatabaseKindFS,
+	DatabaseKindS3,
+	DatabaseKindRedis,
+}
+
+// storeKinds have no database_name — their connection URL carries the whole
+// target — so a configured database_name is a config mistake worth failing on.
+var storeKinds = map[DatabaseKind]bool{
+	DatabaseKindFS:    true,
+	DatabaseKindS3:    true,
+	DatabaseKindRedis: true,
+}
+
+func kindNames() []string {
+	names := make([]string, 0, len(databaseKinds))
+	for _, kind := range databaseKinds {
+		names = append(names, string(kind))
+	}
+	return names
+}
 
 type Config struct {
 	ProjectPath string
@@ -128,11 +165,39 @@ func Load() (*Config, error) {
 }
 
 // Validate checks that the config is coherent for the single-linear-set model:
-// at least one database must be configured, and migrations_db must name a
-// configured [[databases]] entry.
+// at least one database must be configured, every [[databases]] entry must be
+// structurally sound (a unique name, a known kind, a connection URL), and
+// migrations_db must name a configured entry. It catches config mistakes up
+// front, before any connection is attempted.
 func (c *Config) Validate() error {
 	if len(c.Databases) == 0 {
 		return fmt.Errorf("no databases are configured in %s", CONFIG_NAME)
+	}
+	seenNames := make(map[string]bool, len(c.Databases))
+	for _, database := range c.Databases {
+		if database.Name == "" {
+			return fmt.Errorf("a [[databases]] entry has no name; every database needs one for use(alias)")
+		}
+		if seenNames[database.Name] {
+			return fmt.Errorf("two [[databases]] entries are named %q; names must be unique", database.Name)
+		}
+		seenNames[database.Name] = true
+
+		if !slices.Contains(databaseKinds, database.Kind) {
+			return fmt.Errorf(
+				"database %q has unknown kind %q; supported kinds: %s",
+				database.Name, database.Kind, strings.Join(kindNames(), ", "),
+			)
+		}
+		if database.ConnectionUrl == "" {
+			return fmt.Errorf("database %q has no connection_url", database.Name)
+		}
+		if storeKinds[database.Kind] && database.DatabaseName != "" {
+			return fmt.Errorf(
+				"database %q sets database_name, but %s databases do not use it — the connection_url carries the whole target; remove it",
+				database.Name, database.Kind,
+			)
+		}
 	}
 	if c.MigrationsDb == "" {
 		return fmt.Errorf(

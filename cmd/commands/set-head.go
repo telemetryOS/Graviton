@@ -30,6 +30,9 @@ var setHeadCmd = &cobra.Command{
 		run := connectRun(conf)
 		defer run.Disconnect()
 
+		lockRun(run)
+		defer run.Unlock()
+
 		if migrationName == "-" {
 			if err := run.SetHead([]*migrationsmeta.MigrationMetadata{}); err != nil {
 				panic(err)

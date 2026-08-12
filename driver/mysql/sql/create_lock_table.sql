@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS {{.LockTableName}} (
+    id INTEGER PRIMARY KEY,
+    holder VARCHAR(255) NOT NULL,
+    hostname VARCHAR(255) NOT NULL,
+    pid INTEGER NOT NULL,
+    acquired_at DATETIME NOT NULL
+);

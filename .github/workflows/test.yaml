@@ -9,14 +9,82 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    # Every driver's integration tests skip when their backing service is
+    # unreachable, so the services below are what makes CI actually exercise
+    # them. Valkey stands in for Redis to prove the protocol-compatibility
+    # claim; MongoDB and MinIO need commands/arguments that service containers
+    # cannot express, so steps start them with docker instead.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: graviton_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: graviton_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      valkey:
+        image: valkey/valkey:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: 1.21.3
+          go-version-file: go.mod
+
+      - name: Start MongoDB replica set
+        run: |
+          docker run -d --name mongo -p 27017:27017 mongo:7 mongod --replSet rs0 --bind_ip_all
+          for i in $(seq 1 30); do
+            if docker exec mongo mongosh --quiet --eval 'db.runCommand({ ping: 1 })' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec mongo mongosh --quiet --eval 'rs.initiate()'
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio server /data
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:9000/minio/health/live >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          docker run --rm --network host --entrypoint sh minio/mc -c \
+            'mc alias set local http://localhost:9000 minioadmin minioadmin && mc mb local/graviton-test'
 
       - name: Install Dependencies
-        run: go get -v -t ./...
-        
+        run: go mod download
+
       - name: Test
+        env:
+          GRAVITON_TEST_S3_URL: s3://graviton-test?endpoint=http://localhost:9000&path-style=true&access-key=minioadmin&secret-key=minioadmin
         run: go test -v ./...

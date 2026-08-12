@@ -32,6 +32,7 @@ type fakeDriver struct {
 	inTx            bool
 	applied         []*migrationsmeta.MigrationMetadata
 	setAppliedCalls int
+	migrationsLock  *migrationsmeta.MigrationsLock
 }
 
 func (f *fakeDriver) record(event string) { *f.log = append(*f.log, event+":"+f.name) }
@@ -78,6 +79,32 @@ func (f *fakeDriver) RollbackTx(ctx context.Context) error {
 	}
 	f.inTx = false
 	f.record("rollback")
+	return nil
+}
+
+func (f *fakeDriver) AcquireMigrationsLock(ctx context.Context, lock *migrationsmeta.MigrationsLock) (*migrationsmeta.MigrationsLock, error) {
+	if f.migrationsLock != nil {
+		return f.migrationsLock, nil
+	}
+	f.migrationsLock = lock
+	f.record("lock")
+	return nil, nil
+}
+
+func (f *fakeDriver) ReleaseMigrationsLock(ctx context.Context, holder string) error {
+	if f.migrationsLock != nil && f.migrationsLock.Holder == holder {
+		f.migrationsLock = nil
+		f.record("unlock")
+	}
+	return nil
+}
+
+func (f *fakeDriver) GetMigrationsLock(ctx context.Context) (*migrationsmeta.MigrationsLock, error) {
+	return f.migrationsLock, nil
+}
+
+func (f *fakeDriver) ClearMigrationsLock(ctx context.Context) error {
+	f.migrationsLock = nil
 	return nil
 }
 
@@ -230,6 +257,48 @@ func Test_ApplyMigration_BodyPanic_Recovered(t *testing.T) {
 	}
 	if tracking.setAppliedCalls != 0 {
 		t.Errorf("marker must not be written after a panic; calls = %d", tracking.setAppliedCalls)
+	}
+}
+
+func Test_Lock_SecondRunReportsHolderAndUnlockHint(t *testing.T) {
+	run1, _, _, tracking, log := fakeRun()
+	if err := run1.Lock(); err != nil {
+		t.Fatalf("first Lock() error = %v", err)
+	}
+	if indexOf(*log, "lock:t") == -1 {
+		t.Fatalf("lock was not taken in the tracking driver; log = %v", *log)
+	}
+
+	// A second run over the same tracking driver must be refused with the
+	// holder's identity and the unlock recovery hint.
+	run2 := &Run{
+		ctx:     run1.ctx,
+		conf:    run1.conf,
+		drivers: run1.drivers,
+		order:   run1.order,
+	}
+	err := run2.Lock()
+	if err == nil {
+		t.Fatal("second Lock() = nil, want held-by error")
+	}
+	if !strings.Contains(err.Error(), "graviton unlock") {
+		t.Errorf("held-by error = %v, want the `graviton unlock` hint", err)
+	}
+	if !strings.Contains(err.Error(), tracking.migrationsLock.Hostname) {
+		t.Errorf("held-by error = %v, want the holder's hostname", err)
+	}
+
+	// Unlock releases, and only the holder's own lock.
+	run2.Unlock() // no-op: run2 holds nothing
+	if tracking.migrationsLock == nil {
+		t.Fatal("Unlock() of a lockless run released the other run's lock")
+	}
+	run1.Unlock()
+	if tracking.migrationsLock != nil {
+		t.Fatal("Unlock() did not release the held lock")
+	}
+	if err := run2.Lock(); err != nil {
+		t.Fatalf("Lock() after release error = %v", err)
 	}
 }
 

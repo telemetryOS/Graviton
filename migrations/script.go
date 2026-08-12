@@ -214,8 +214,8 @@ func (s *Script) intoJs(vr reflect.Value) goja.Value {
 		default:
 			return s.runtime.ToValue(func(call goja.FunctionCall) goja.Value {
 				argsVrs := []reflect.Value{}
-				for _, arg := range call.Arguments {
-					argsVrs = append(argsVrs, reflect.ValueOf(s.fromJs(arg)))
+				for i, arg := range call.Arguments {
+					argsVrs = append(argsVrs, argValue(tr, i, s.fromJs(arg)))
 				}
 				rtnVrs := vr.Call(argsVrs)
 				switch len(rtnVrs) {
@@ -249,7 +249,33 @@ func (s *Script) intoJs(vr reflect.Value) goja.Value {
 	}
 }
 
+// argValue converts one Go-converted script argument into the reflect Value
+// for fn's i'th parameter. A JS null/undefined argument converts to nil, which
+// reflect.ValueOf cannot represent (Call would panic with an opaque "zero
+// Value argument" error), so nil maps to the parameter type's zero value —
+// leaving the receiving handle to report a meaningful type error.
+func argValue(fn reflect.Type, i int, arg any) reflect.Value {
+	if arg != nil {
+		return reflect.ValueOf(arg)
+	}
+	if fn.IsVariadic() && i >= fn.NumIn()-1 {
+		return reflect.Zero(fn.In(fn.NumIn() - 1).Elem())
+	}
+	if i < fn.NumIn() {
+		return reflect.Zero(fn.In(i))
+	}
+	// An excess nil argument to a non-variadic function: pass a typed nil so
+	// reflect.Call reports the real arity error.
+	return reflect.ValueOf(&arg).Elem()
+}
+
 func (s *Script) fromJs(val goja.Value) any {
+	// JS null and undefined convert to nil up front: no driver hook claims
+	// them, and the constructor checks below would throw a TypeError trying to
+	// convert them to objects.
+	if val == nil || goja.IsNull(val) || goja.IsUndefined(val) {
+		return nil
+	}
 	// Driver-native values first: a host-wrapped driver type (ObjectId
 	// instance, BSON binary, SQLQuery, …) would otherwise be decomposed by the
 	// generic Object branch below, dragging its methods along as function

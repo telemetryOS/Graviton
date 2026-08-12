@@ -1,0 +1,15 @@
+# Filesystem example.
+#
+# The "database" is a root directory; migrations read, write, move, and delete
+# files under it (paths are sandboxed to the root). There are no transactions:
+# file operations apply immediately and are not rolled back if the body fails,
+# so write migrations to be idempotent. Applied-migration tracking lives in
+# graviton-migrations.json at the root.
+
+migrations_db = "files"
+migrations_path = "./migrations"
+
+[[databases]]
+name = "files"
+kind = "fs"
+connection_url = "./store"
