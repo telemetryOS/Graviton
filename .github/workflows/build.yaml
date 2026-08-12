@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - master
+    # Tag builds carry the released version. Without this the workflow only ran
+    # on branch pushes, so a release build was indistinguishable from any other.
+    tags:
+      - 'v*'
   pull_request:
     branches:
       - master
@@ -33,16 +37,41 @@ jobs:
       - name: Install Dependencies
         run: go mod download
 
+      # The version comes from the tag being built, not from a constant someone
+      # has to remember to bump. Off a tag it is that tag; off master or a pull
+      # request it is the short SHA, so a binary always says where it came from.
+      - name: Resolve Version
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build
         run: |
           GOOS=${{matrix.goos}}
           GOARCH=${{matrix.goarch}}
-          go build -v -o graviton-${{matrix.os}}-${{matrix.arch}} ./cmd/graviton
+          go build -v \
+            -ldflags "-X github.com/telemetryos/graviton/cmd/commands.Version=${{steps.version.outputs.value}}" \
+            -o graviton-${{matrix.os}}-${{matrix.arch}} ./cmd/graviton
+
+      - name: Verify Reported Version
+        shell: bash
+        run: |
+          reported="$(./graviton-${{matrix.os}}-${{matrix.arch}} -v)"
+          echo "$reported"
+          case "$reported" in
+            *"${{steps.version.outputs.value}}"*) ;;
+            *) echo "binary reports '$reported', expected '${{steps.version.outputs.value}}'" >&2; exit 1 ;;
+          esac
 
       - name: Set Executable Permission
         run: |
           chmod +x graviton-${{matrix.os}}-${{matrix.arch}}
-      
+
       - uses: actions/upload-artifact@v7
         with:
           name: graviton-${{matrix.os}}-${{matrix.arch}}

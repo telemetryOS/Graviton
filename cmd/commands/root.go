@@ -18,7 +18,16 @@ import (
 // overridden at build time with:
 //
 //	-ldflags "-X github.com/telemetryos/graviton/cmd/commands.Version=$(git describe --tags)"
-var Version = "v2.3.0"
+// Version is set at build time with
+//
+//	-ldflags "-X github.com/telemetryos/graviton/cmd/commands.Version=<version>"
+//
+// which the build workflow fills from the tag being built. The default is
+// "dev" rather than a release number on purpose: a binary built straight from
+// source has no release identity, and claiming one made `graviton -v` lie
+// whenever the constant drifted from the tag — which it did, silently, for
+// v2.2.0 and v2.3.0.
+var Version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:     "graviton",
