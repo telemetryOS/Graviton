@@ -67,12 +67,29 @@ func JSCrypto(jsvm *goja.Runtime) *goja.Object {
 		if err != nil {
 			panic(jsvm.NewGoError(err))
 		}
-		if len(data) < aead.NonceSize() {
-			panic(jsvm.NewGoError(fmt.Errorf(
-				"ciphertext is %d bytes, shorter than the %d-byte %s nonce it must begin with",
-				len(data), aead.NonceSize(), algorithm)))
+		// The nonce may be supplied separately or read from the front of the
+		// ciphertext. Both layouts occur in the wild: encrypt() prefixes it, but
+		// plenty of stored formats keep it in its own field alongside the
+		// ciphertext, and those callers should not have to splice bytes.
+		var nonce, sealed []byte
+		if nonceVal := call.Argument(3); !goja.IsUndefined(nonceVal) && !goja.IsNull(nonceVal) {
+			nonce, err = BytesFromJS(jsvm, nonceVal)
+			if err != nil {
+				panic(jsvm.NewGoError(fmt.Errorf("nonce: %w", err)))
+			}
+			if len(nonce) != aead.NonceSize() {
+				panic(jsvm.NewGoError(fmt.Errorf(
+					"%s needs a %d-byte nonce, got %d", algorithm, aead.NonceSize(), len(nonce))))
+			}
+			sealed = data
+		} else {
+			if len(data) < aead.NonceSize() {
+				panic(jsvm.NewGoError(fmt.Errorf(
+					"ciphertext is %d bytes, shorter than the %d-byte %s nonce it must begin with; pass the nonce as a fourth argument if it is stored separately",
+					len(data), aead.NonceSize(), algorithm)))
+			}
+			nonce, sealed = data[:aead.NonceSize()], data[aead.NonceSize():]
 		}
-		nonce, sealed := data[:aead.NonceSize()], data[aead.NonceSize():]
 		plain, err := aead.Open(nil, nonce, sealed, nil)
 		if err != nil {
 			// Authenticated: this is a wrong key or altered ciphertext, never

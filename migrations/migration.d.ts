@@ -181,7 +181,9 @@ type Crypto = {
   // Authenticated: a wrong key or altered ciphertext throws rather than
   // yielding wrong plaintext. For AEAD the nonce sits at the front of the
   // ciphertext, where encrypt() writes it.
-  decrypt(algorithm: EncryptAlgorithm, key: Bytes, ciphertext: Bytes): Bytes;
+  // nonce is optional for AEAD: omit it when it is prefixed to the ciphertext
+  // (as encrypt writes it), or pass it when the format stores it separately.
+  decrypt(algorithm: EncryptAlgorithm, key: Bytes, ciphertext: Bytes, nonce?: Bytes): Bytes;
   // nonce is optional for AEAD: pass one for reproducible output, omit it for a
   // random one. Whether a migration needs to be reproducible is its author's
   // call. Ignored by the rsa-oaep algorithms.

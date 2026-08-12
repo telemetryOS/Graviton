@@ -181,3 +181,50 @@ func Test_Crypto_ShortCiphertextIsReported(t *testing.T) {
 		t.Errorf("a too-short ciphertext should mention the nonce, got %q", msg)
 	}
 }
+
+// Test_Crypto_DecryptsSeparatelyStoredNonce covers the layout the legacy
+// TelemetryOS device data uses: the ciphertext in one field and the nonce in
+// another, rather than the nonce prefixed to the ciphertext.
+func Test_Crypto_DecryptsSeparatelyStoredNonce(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	nonce := []byte("123456789012")
+	// Note: sealed does NOT carry the nonce.
+	sealed := gcm.Seal(nil, nonce, []byte(`"https://example.com/a.mp4"`), nil)
+
+	jsvm := newTestRuntime(t)
+	jsvm.Set("ciphertext", base64.StdEncoding.EncodeToString(sealed))
+	jsvm.Set("nonce", base64.StdEncoding.EncodeToString(nonce))
+
+	got := mustRun(t, jsvm, `
+		JSON.parse(enc.encode("utf8", crypto.decrypt("aes-gcm",
+			enc.decode("utf8", "0123456789abcdef"),
+			enc.decode("base64", ciphertext),
+			enc.decode("base64", nonce))))
+	`)
+	if got.String() != "https://example.com/a.mp4" {
+		t.Errorf("decrypted = %q", got.String())
+	}
+}
+
+func Test_Crypto_SeparateNonceMustBeCorrectLength(t *testing.T) {
+	jsvm := newTestRuntime(t)
+	msg := runErr(t, jsvm, `crypto.decrypt("aes-gcm",
+		enc.decode("utf8", "0123456789abcdef"),
+		enc.decode("utf8", "0123456789012345678901234567"),
+		enc.decode("utf8", "too-short"))`)
+	if !strings.Contains(msg, "12-byte nonce") {
+		t.Errorf("a wrong-length nonce should be reported, got %q", msg)
+	}
+}
+
+// The prefixed layout keeps working, and the error now points at the
+// alternative when the ciphertext is too short to contain a nonce.
+func Test_Crypto_ShortCiphertextSuggestsSeparateNonce(t *testing.T) {
+	jsvm := newTestRuntime(t)
+	msg := runErr(t, jsvm, `crypto.decrypt("aes-gcm", enc.decode("utf8", "0123456789abcdef"), enc.decode("utf8", "short"))`)
+	if !strings.Contains(msg, "fourth argument") {
+		t.Errorf("error should mention passing the nonce separately, got %q", msg)
+	}
+}

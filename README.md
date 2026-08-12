@@ -655,7 +655,7 @@ interface Crypto {
   // Symmetric AEAD and public-key encryption share these two functions; the
   // algorithm decides how the key is read. nonce is optional for AEAD — pass
   // one for reproducible output, omit it for a random one.
-  decrypt(algorithm: EncryptAlgorithm, key: Bytes, ciphertext: Bytes): Bytes
+  decrypt(algorithm: EncryptAlgorithm, key: Bytes, ciphertext: Bytes, nonce?: Bytes): Bytes
   encrypt(algorithm: EncryptAlgorithm, key: Bytes, plaintext: Bytes, nonce?: Bytes): Bytes
 
   hash(algorithm: HashAlgorithm, data: Bytes): Bytes
@@ -699,9 +699,10 @@ noticed. Keys and data are always bytes; `enc` performs every conversion, so
 nothing has to infer whether an argument arrived encoded.
 
 Decryption is authenticated. A wrong key or altered ciphertext throws rather
-than returning wrong plaintext. For AEAD the nonce sits at the front of the
-ciphertext, which is where `encrypt` writes it. AES keys may be 16, 24 or 32
-bytes.
+than returning wrong plaintext. For AEAD the nonce is read from the front of
+the ciphertext, where `encrypt` writes it — or passed as a fourth argument when
+the stored format keeps it in a separate field, which many do. AES keys may be
+16, 24 or 32 bytes.
 
 `encrypt` takes an optional nonce. Supplying one makes the output reproducible,
 so re-running a migration leaves unchanged rows alone; omitting it generates a
