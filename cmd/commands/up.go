@@ -38,6 +38,12 @@ var upCmd = &cobra.Command{
 		run := connectRun(conf)
 		defer run.Disconnect()
 
+		if noTransactions, _ := cmd.Flags().GetBool("no-transactions"); noTransactions {
+			run.DisableTransactions()
+			fmt.Println("Running without transactions: a migration that fails partway " +
+				"leaves its partial writes in place.")
+		}
+
 		lockRun(run)
 		defer run.Unlock()
 
@@ -99,5 +105,9 @@ var upCmd = &cobra.Command{
 }
 
 func init() {
+	upCmd.Flags().Bool("no-transactions", false,
+		"apply migrations without wrapping them in a transaction, for writes too "+
+			"large to fit in one; gives up rollback, so only use it for idempotent, "+
+			"convergent migrations")
 	rootCmd.AddCommand(upCmd)
 }

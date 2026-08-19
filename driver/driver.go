@@ -70,6 +70,27 @@ type Driver interface {
 	MaybeIntoJSValue(ctx context.Context, runtime *goja.Runtime, value any) (goja.Value, bool)
 }
 
+// TransactionDisabler is implemented by drivers that normally wrap a
+// migration's writes in a transaction and are able to run without one.
+//
+// It exists for datasets whose writes cannot fit in a single transaction: a
+// MongoDB transaction is bounded by transactionLifetimeLimitSeconds and by a
+// hard 16MB total oplog size, and a large ETL exceeds both. Running such a
+// migration without a transaction is the operator's explicit choice, made per
+// run with `up --no-transactions`, never a default or a silent fallback.
+//
+// The trade is atomicity: a migration that fails partway leaves the writes it
+// already made in place. That is only safe for idempotent, convergent
+// migrations, which re-runs bring to the same result. Graviton's recovery model
+// already leans on that property — the applied marker is written last, so an
+// interrupted migration stays unmarked and re-runs.
+//
+// Drivers with no transactions to disable (fs, s3, redis) simply do not
+// implement it.
+type TransactionDisabler interface {
+	DisableTransactions()
+}
+
 // ValidateDatabaseConfig statically checks one [[databases]] entry beyond the
 // structural checks config.Validate performs — currently the per-kind
 // connection URL shape for the kinds whose URLs parse without a connection.

@@ -530,6 +530,24 @@ func (r *Run) GetAppliedWithDownFuncFromDisk() ([]*Migration, error) {
 	return appliedMigrations, nil
 }
 
+// DisableTransactions puts every driver that supports it into non-transactional
+// mode for the rest of the run, so a migration whose writes cannot fit in one
+// transaction can still be applied. Drivers that have no transactions to
+// disable are left alone.
+//
+// This gives up rollback: ApplyMigration's failure path can no longer undo what
+// the body already wrote, and a migration that fails partway leaves its partial
+// writes behind. The applied marker is still written last, so the migration
+// stays unmarked and re-runs — which recovers the run only for migrations that
+// are idempotent and convergent. See driver.TransactionDisabler.
+func (r *Run) DisableTransactions() {
+	for _, alias := range r.order {
+		if d, ok := r.drivers[alias].(driver.TransactionDisabler); ok {
+			d.DisableTransactions()
+		}
+	}
+}
+
 // ApplyMigration runs a migration body and, on success, commits every open data
 // transaction and then writes the applied marker last in its own transaction.
 //
