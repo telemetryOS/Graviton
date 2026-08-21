@@ -18,6 +18,7 @@ import (
 // overridden at build time with:
 //
 //	-ldflags "-X github.com/telemetryos/graviton/cmd/commands.Version=$(git describe --tags)"
+//
 // Version is set at build time with
 //
 //	-ldflags "-X github.com/telemetryos/graviton/cmd/commands.Version=<version>"
@@ -28,6 +29,8 @@ import (
 // whenever the constant drifted from the tag — which it did, silently, for
 // v2.2.0 and v2.3.0.
 var Version = "dev"
+
+var configPath string
 
 var rootCmd = &cobra.Command{
 	Use:     "graviton",
@@ -46,9 +49,10 @@ func Execute() error {
 }
 
 func assertConfig() *config.Config {
-	conf, err := config.Load()
+	conf, err := config.LoadPath(configPath)
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
 	}
 	if conf == nil {
 		fmt.Println("No configuration found. Create a graviton.config.toml in the root of your project.")
@@ -66,6 +70,15 @@ func assertConfig() *config.Config {
 	}
 
 	return conf
+}
+
+func init() {
+	rootCmd.PersistentFlags().StringVar(
+		&configPath,
+		"config",
+		"",
+		"path to a config file (default: discover graviton.config.toml from the working directory)",
+	)
 }
 
 // connectRun builds a Run over the whole project and connects every configured

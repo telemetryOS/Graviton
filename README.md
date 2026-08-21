@@ -44,7 +44,10 @@ Alternatively, build from source or download a binary from the [releases page](h
 
 ### Create a Configuration File
 
-Graviton requires a configuration file named `graviton.config.toml` in your project root. This file defines which databases your project uses, where the single linear migration set lives, and which database holds the migration tracking.
+By default, Graviton discovers a configuration file named
+`graviton.config.toml` from the working directory or one of its parents. This
+file defines which databases your project uses, where the single linear
+migration set lives, and which database holds the migration tracking.
 
 ```toml
 migrations_db = "main"           # the [[databases]] entry that tracks applied migrations
@@ -58,6 +61,24 @@ database_name = "mydb"
 ```
 
 There is **one** migration directory and **one** linear applied-migrations list for the whole project, no matter how many databases are configured. `migrations_db` must name one of the configured `[[databases]]` entries; the tracking collection/table (`graviton-migrations`) is created there. When exactly one database is configured, `migrations_db` defaults to it and can be omitted.
+
+Every command also accepts a global `--config <path>` flag when discovery is
+not appropriate. Relative config paths are resolved from the working directory;
+the selected config's relative `migrations_path` is resolved from the directory
+containing that config. An explicit path always wins over a discoverable
+`graviton.config.toml`.
+
+```bash
+# Both flag positions are equivalent.
+graviton --config ./config/development.toml status
+graviton status --config ./config/development.toml
+
+# Run an included example while staying at the repository root.
+graviton --config ./example/multi-database-migrations/graviton.config.toml status
+```
+
+A missing, unreadable, or invalid explicit config fails before Graviton opens a
+database connection.
 
 ### Create Your First Migration
 
@@ -369,6 +390,11 @@ database_name = "mydb"
 `${VAR}` references anywhere in the file are substituted from the environment
 before parsing, keeping connection strings portable across environments.
 
+Without `--config`, Graviton searches for `graviton.config.toml` from the
+working directory upward. With `--config <path>`, only that file is loaded. A
+relative flag value is working-directory-relative, while `migrations_path`
+inside the selected file remains config-directory-relative.
+
 ### Top-Level Configuration
 
 Configuration Field | Description
@@ -514,6 +540,9 @@ and any of them can serve as `migrations_db` (the tracking list is stored as a
 `graviton-migrations.json` file/object, or a `graviton-migrations` key).
 
 ## Commands
+
+`--config <path>` is a global option and may appear before or after any
+subcommand. Omit it to retain `graviton.config.toml` discovery.
 
 ### up
 

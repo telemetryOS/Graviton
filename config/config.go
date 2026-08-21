@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -111,25 +110,37 @@ func Exists() bool {
 	return configPath != ""
 }
 
-// Load loads the config from the current project if one exists.
+// Load discovers and loads the config from the current project if one exists.
 func Load() (*Config, error) {
-	configPath, err := GetFilePath()
-	if err != nil {
-		return nil, err
-	}
-	if configPath == "" {
-		return nil, nil
+	return LoadPath("")
+}
+
+// LoadPath loads an explicit config path, or discovers graviton.config.toml
+// from the working directory when path is empty. Relative explicit paths are
+// resolved from the working directory. ProjectPath is always the directory
+// containing the selected config, so migrations_path remains config-relative.
+func LoadPath(path string) (*Config, error) {
+	configPath := path
+	if configPath != "" {
+		resolved, err := filepath.Abs(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve config path %q: %w", configPath, err)
+		}
+		configPath = resolved
+	} else {
+		var err error
+		configPath, err = GetFilePath()
+		if err != nil {
+			return nil, err
+		}
+		if configPath == "" {
+			return nil, nil
+		}
 	}
 
-	configFile, err := os.OpenFile(configPath, os.O_RDONLY, 0644)
+	configSrc, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, err
-	}
-	defer configFile.Close()
-
-	configSrc, err := io.ReadAll(configFile)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read config %q: %w", configPath, err)
 	}
 
 	// FIXME: THIS SUCKS, we need fallbacks
@@ -146,7 +157,7 @@ func Load() (*Config, error) {
 
 	var config Config
 	if err := toml.NewDecoder(configSrcReader).Decode(&config); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse config %q: %w", configPath, err)
 	}
 
 	config.ProjectPath = filepath.Dir(configPath)

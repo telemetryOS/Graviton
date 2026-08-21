@@ -155,6 +155,75 @@ database_name = "neo_main"
 	}
 }
 
+func Test_LoadPath_ExplicitRelativePathWinsAndAnchorsProject(t *testing.T) {
+	projectDir := t.TempDir()
+	explicitDir := filepath.Join(projectDir, "configs")
+	if err := os.MkdirAll(explicitDir, 0755); err != nil {
+		t.Fatalf("create config directory: %v", err)
+	}
+
+	const discovered = `[[databases]]
+name = "discovered"
+kind = "mongodb"
+connection_url = "mongodb://localhost:27017"
+database_name = "discovered"
+`
+	if err := os.WriteFile(filepath.Join(projectDir, CONFIG_NAME), []byte(discovered), 0644); err != nil {
+		t.Fatalf("write discovered config: %v", err)
+	}
+
+	const explicit = `migrations_path = "./selected-migrations"
+
+[[databases]]
+name = "selected"
+kind = "mongodb"
+connection_url = "mongodb://localhost:27017"
+database_name = "selected"
+`
+	explicitPath := filepath.Join(explicitDir, "development.toml")
+	if err := os.WriteFile(explicitPath, []byte(explicit), 0644); err != nil {
+		t.Fatalf("write explicit config: %v", err)
+	}
+
+	withWorkingDir(t, projectDir)
+	conf, err := LoadPath(filepath.Join("configs", "development.toml"))
+	if err != nil {
+		t.Fatalf("LoadPath() error = %v", err)
+	}
+	if conf.MigrationsDb != "selected" {
+		t.Errorf("MigrationsDb = %q, want selected explicit config", conf.MigrationsDb)
+	}
+	if conf.ProjectPath != explicitDir {
+		t.Errorf("ProjectPath = %q, want explicit config directory %q", conf.ProjectPath, explicitDir)
+	}
+	wantMigrationsPath := filepath.Join(explicitDir, "selected-migrations")
+	if got := filepath.Join(conf.ProjectPath, conf.MigrationsPath); got != wantMigrationsPath {
+		t.Errorf("resolved migrations path = %q, want %q", got, wantMigrationsPath)
+	}
+}
+
+func Test_LoadPath_MissingExplicitConfigReturnsReadError(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.toml")
+	conf, err := LoadPath(missing)
+	if err == nil {
+		t.Fatalf("LoadPath(%q) = %#v, nil; want read error", missing, conf)
+	}
+	if !strings.Contains(err.Error(), "read config") || !strings.Contains(err.Error(), missing) {
+		t.Errorf("error = %q, want read error naming explicit path", err.Error())
+	}
+}
+
+func Test_LoadPath_UnreadableExplicitConfigReturnsReadError(t *testing.T) {
+	unreadable := t.TempDir()
+	conf, err := LoadPath(unreadable)
+	if err == nil {
+		t.Fatalf("LoadPath(%q) = %#v, nil; want read error", unreadable, conf)
+	}
+	if !strings.Contains(err.Error(), "read config") || !strings.Contains(err.Error(), unreadable) {
+		t.Errorf("error = %q, want read error naming explicit path", err.Error())
+	}
+}
+
 func withWorkingDir(t *testing.T, dir string) {
 	t.Helper()
 	orig, err := os.Getwd()

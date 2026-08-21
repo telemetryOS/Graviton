@@ -12,7 +12,7 @@ import (
 func buildGraviton(t *testing.T) string {
 	t.Helper()
 	binPath := filepath.Join(t.TempDir(), "graviton")
-	build := exec.Command("go", "build", "-o", binPath, "github.com/telemetryos/graviton/cmd/graviton")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binPath, "github.com/telemetryos/graviton/cmd/graviton")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build graviton binary: %v\n%s", err, out)
 	}
