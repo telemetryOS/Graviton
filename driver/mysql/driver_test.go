@@ -54,7 +54,7 @@ func cleanDatabase(t *testing.T, drv *Driver, ctx context.Context) {
 		if err := rows.Scan(&table); err != nil {
 			t.Fatalf("Failed to scan table name: %v", err)
 		}
-		if table != MIGRATIONS_TABLE {
+		if table != MIGRATIONS_TABLE && table != MIGRATIONS_LOCK_TABLE {
 			tables = append(tables, table)
 		}
 	}
@@ -67,6 +67,9 @@ func cleanDatabase(t *testing.T, drv *Driver, ctx context.Context) {
 
 	if _, err := drv.db.ExecContext(ctx, "DELETE FROM "+MIGRATIONS_TABLE); err != nil {
 		t.Fatalf("Failed to clean migrations table: %v", err)
+	}
+	if _, err := drv.db.ExecContext(ctx, "DELETE FROM "+MIGRATIONS_LOCK_TABLE); err != nil {
+		t.Fatalf("Failed to clean migrations lock table: %v", err)
 	}
 }
 

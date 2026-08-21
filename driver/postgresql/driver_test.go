@@ -44,7 +44,9 @@ func cleanDatabase(t *testing.T, drv *Driver, ctx context.Context) {
 
 	rows, err := drv.db.QueryContext(ctx, `
 		SELECT tablename FROM pg_tables
-		WHERE schemaname = 'public' AND tablename != 'graviton_migrations'
+		WHERE schemaname = 'public'
+			AND tablename != 'graviton_migrations'
+			AND tablename != 'graviton_migrations_lock'
 	`)
 	if err != nil {
 		t.Fatalf("Failed to list tables: %v", err)
@@ -68,6 +70,9 @@ func cleanDatabase(t *testing.T, drv *Driver, ctx context.Context) {
 
 	if _, err := drv.db.ExecContext(ctx, "DELETE FROM "+MIGRATIONS_TABLE); err != nil {
 		t.Fatalf("Failed to clean migrations table: %v", err)
+	}
+	if _, err := drv.db.ExecContext(ctx, "DELETE FROM "+MIGRATIONS_LOCK_TABLE); err != nil {
+		t.Fatalf("Failed to clean migrations lock table: %v", err)
 	}
 }
 

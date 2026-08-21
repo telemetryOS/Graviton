@@ -60,12 +60,27 @@ jobs:
         run: |
           docker run -d --name mongo -p 27017:27017 mongo:7 mongod --replSet rs0 --bind_ip_all
           for i in $(seq 1 30); do
-            if docker exec mongo mongosh --quiet --eval 'db.runCommand({ ping: 1 })' >/dev/null 2>&1; then
+            if docker exec mongo mongosh --quiet --eval 'quit(db.runCommand({ ping: 1 }).ok ? 0 : 1)' >/dev/null 2>&1; then
               break
+            fi
+            if [ "$i" -eq 30 ]; then
+              docker logs mongo
+              exit 1
             fi
             sleep 1
           done
-          docker exec mongo mongosh --quiet --eval 'rs.initiate()'
+          docker exec mongo mongosh --quiet --eval \
+            'rs.initiate({_id: "rs0", members: [{_id: 0, host: "localhost:27017"}]})'
+          for i in $(seq 1 30); do
+            if docker exec mongo mongosh --quiet --eval 'quit(db.hello().isWritablePrimary ? 0 : 1)' >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              docker logs mongo
+              exit 1
+            fi
+            sleep 1
+          done
 
       - name: Start MinIO
         run: |
