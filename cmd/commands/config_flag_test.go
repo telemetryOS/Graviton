@@ -1,11 +1,13 @@
 package commands_test
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const fileStoreConfig = `migrations_path = "./selected-migrations"
@@ -15,6 +17,22 @@ name = "files"
 kind = "fs"
 connection_url = "./store"
 `
+
+const gravitonCommandTimeout = 10 * time.Second
+
+func runGravitonCommand(t *testing.T, bin, dir string, args ...string) ([]byte, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), gravitonCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("graviton %s timed out after %s\n%s", strings.Join(args, " "), gravitonCommandTimeout, out)
+	}
+	return out, err
+}
 
 func Test_ConfigFlag_IsAvailableToEveryCommand(t *testing.T) {
 	bin := buildGraviton(t)
@@ -29,8 +47,7 @@ func Test_ConfigFlag_IsAvailableToEveryCommand(t *testing.T) {
 		{"upgrade", "--help"},
 	}
 	for _, args := range commands {
-		cmd := exec.Command(bin, args...)
-		out, err := cmd.CombinedOutput()
+		out, err := runGravitonCommand(t, bin, "", args...)
 		if err != nil {
 			t.Fatalf("graviton %s failed: %v\n%s", strings.Join(args, " "), err, out)
 		}
@@ -62,9 +79,7 @@ func Test_ConfigFlag_ExplicitPathWinsAndMigrationsPathIsConfigRelative(t *testin
 		{"--config", relativeConfigPath, "create", "leading-flag"},
 		{"create", "trailing-flag", "--config", relativeConfigPath},
 	} {
-		cmd := exec.Command(bin, args...)
-		cmd.Dir = projectDir
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := runGravitonCommand(t, bin, projectDir, args...); err != nil {
 			t.Fatalf("graviton %s failed: %v\n%s", strings.Join(args, " "), err, out)
 		}
 	}
@@ -101,9 +116,7 @@ func Test_ConfigFlag_UnreadableExplicitPathFailsBeforeDiscoveredConfig(t *testin
 		filepath.Join("configs", "missing.toml"),
 		"unreadable-config",
 	} {
-		cmd := exec.Command(bin, "status", "--config", path)
-		cmd.Dir = projectDir
-		out, err := cmd.CombinedOutput()
+		out, err := runGravitonCommand(t, bin, projectDir, "status", "--config", path)
 		if err == nil {
 			t.Fatalf("graviton status with unreadable explicit config %q succeeded:\n%s", path, out)
 		}
