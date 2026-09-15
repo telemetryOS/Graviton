@@ -93,8 +93,9 @@ jobs:
             fi
             sleep 1
           done
-          docker run --rm --network host --entrypoint sh quay.io/minio/mc -c \
-            'mc alias set local http://localhost:9000 minioadmin minioadmin && mc mb local/graviton-test'
+          docker run --rm --network host \
+            -e MC_HOST_local=http://minioadmin:minioadmin@localhost:9000 \
+            --entrypoint /usr/bin/mc quay.io/minio/mc mb local/graviton-test
 
       - name: Install Dependencies
         run: go mod download
