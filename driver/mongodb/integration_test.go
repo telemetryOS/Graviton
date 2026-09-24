@@ -1,6 +1,7 @@
 package mongodb
 
 import (
+	"github.com/telemetryos/graviton/driver/transaction"
 	"testing"
 	"time"
 
@@ -16,6 +17,10 @@ import (
 
 func Test_Integration_Transaction_Commit(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
+	if err := drv.BeginTx(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ = transaction.New(ctx)
 
 	handle := drv.Handle(ctx).(*MongoHandle)
 	migrationsMeta := []*migrationsmeta.MigrationMetadata{
@@ -53,6 +58,10 @@ func Test_Integration_Transaction_Commit(t *testing.T) {
 
 func Test_Integration_Transaction_Rollback(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
+	if err := drv.BeginTx(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ = transaction.New(ctx)
 
 	handle := drv.Handle(ctx).(*MongoHandle)
 	migrationsMeta := []*migrationsmeta.MigrationMetadata{

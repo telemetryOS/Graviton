@@ -3,6 +3,7 @@ package mongodb
 import (
 	"context"
 	"errors"
+	"github.com/telemetryos/graviton/driver/transaction"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -22,16 +23,12 @@ type FindOneOptions = options.FindOneOptions
 type UpdateOptions = options.UpdateOptions
 type DeleteOptions = options.DeleteOptions
 
-// opCtx returns the context used for collection operations. The first operation
-// against this driver in a migration lazily begins a transaction; every
-// subsequent operation — including those against other databases reached via
-// use(alias) — joins that driver's own transaction and rollback semantics.
+// opCtx selects the session associated with this collection's handle.
 func (c *Collection) opCtx() context.Context {
-	sessCtx, err := c.driver.ensureTx(c.ctx)
-	if err != nil {
-		panic(err)
+	if transaction.Bound(c.ctx) {
+		return c.driver.sessionCtx
 	}
-	return sessCtx
+	return c.ctx
 }
 
 func (c *Collection) InsertMany(docs []any, options ...*InsertManyOptions) *mongo.InsertManyResult {

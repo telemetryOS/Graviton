@@ -12,6 +12,7 @@ import (
 
 	"github.com/telemetryos/graviton/config"
 	"github.com/telemetryos/graviton/driver"
+	"github.com/telemetryos/graviton/driver/transaction"
 	migrationsmeta "github.com/telemetryos/graviton/migrations-meta"
 )
 
@@ -153,6 +154,7 @@ type Handle struct {
 }
 
 func (h *Handle) Use(alias string) *Handle {
+	transaction.Bound(h.ctx)
 	d, ok := h.run.drivers[alias]
 	if !ok {
 		panic(fmt.Errorf(
@@ -160,7 +162,7 @@ func (h *Handle) Use(alias string) *Handle {
 			alias, strings.Join(h.run.order, ", "),
 		))
 	}
-	return &Handle{ctx: h.ctx, run: h.run, alias: alias, drv: d}
+	return &Handle{ctx: h.run.ctx, run: h.run, alias: alias, drv: d}
 }
 
 // databaseRenamer is implemented by driver kinds that support renaming a whole
@@ -190,6 +192,7 @@ type databaseRenamer interface {
 // later fails the rename is not undone. Use it in a dedicated retire-databases
 // migration, not mixed with transactional writes.
 func (h *Handle) Rename(newName string) {
+	transaction.Bound(h.ctx)
 	if h.drv == nil {
 		panic(fmt.Errorf(
 			"multiple databases are configured (%s); call use(alias) to select one before renaming",
@@ -226,6 +229,7 @@ type streamWriter interface {
 // hold the entire content at once. Like every store operation it is immediate
 // and non-transactional.
 func (h *Handle) CopyTo(destAlias string, src string, dst string) {
+	transaction.Bound(h.ctx)
 	if h.drv == nil {
 		panic(fmt.Errorf(
 			"multiple databases are configured (%s); call use(alias) to select the source before copyTo()",
@@ -359,6 +363,7 @@ func keyed(key string, tail []any) []any {
 // A method the bound kind does not provide (e.g. collection() on a SQL database)
 // errors clearly rather than silently missing.
 func (h *Handle) delegate(method string, args ...any) any {
+	transaction.Bound(h.ctx)
 	if h.drv == nil {
 		panic(fmt.Errorf(
 			"multiple databases are configured (%s); call use(alias) to select one before running operations",
@@ -530,46 +535,18 @@ func (r *Run) GetAppliedWithDownFuncFromDisk() ([]*Migration, error) {
 	return appliedMigrations, nil
 }
 
-// DisableTransactions puts every driver that supports it into non-transactional
-// mode for the rest of the run, so a migration whose writes cannot fit in one
-// transaction can still be applied. Drivers that have no transactions to
-// disable are left alone.
-//
-// This gives up rollback: ApplyMigration's failure path can no longer undo what
-// the body already wrote, and a migration that fails partway leaves its partial
-// writes behind. The applied marker is still written last, so the migration
-// stays unmarked and re-runs — which recovers the run only for migrations that
-// are idempotent and convergent. See driver.TransactionDisabler.
-func (r *Run) DisableTransactions() {
-	for _, alias := range r.order {
-		if d, ok := r.drivers[alias].(driver.TransactionDisabler); ok {
-			d.DisableTransactions()
-		}
-	}
-}
-
-// ApplyMigration runs a migration body and, on success, commits every open data
-// transaction and then writes the applied marker last in its own transaction.
-//
-// The recovery model is idempotent/convergent migrations plus re-run: because
-// the marker is written strictly after the data commits (and in a separate
-// transaction), a process that dies after some data commits but before the
-// marker leaves the migration unmarked, so it re-runs. Cross-database atomicity
-// is per-handle, not joint — this is deliberate.
-//
-// markerList is the full applied-migrations list to persist once the body and
-// its data commits succeed.
+// ApplyMigration records completion after the body and its explicit transactions succeed.
 func (r *Run) ApplyMigration(body func() error, markerList []*migrationsmeta.MigrationMetadata) error {
 	if err := runBody(body); err != nil {
 		r.rollbackAll()
 		return err
 	}
 
-	if err := r.commitDataTransactions(); err != nil {
-		// Databases committed before the failure stay committed; roll back the
-		// rest and leave the marker unwritten so the migration re-runs.
-		r.rollbackAll()
-		return err
+	for _, d := range r.drivers {
+		if d.HasOpenTx() {
+			r.rollbackAll()
+			return fmt.Errorf("migration left an unfinished transaction")
+		}
 	}
 
 	return r.writeMarker(markerList)
@@ -594,19 +571,6 @@ func runBody(body func() error) (err error) {
 		}
 	}()
 	return body()
-}
-
-func (r *Run) commitDataTransactions() error {
-	for _, alias := range r.order {
-		d := r.drivers[alias]
-		if !d.HasOpenTx() {
-			continue
-		}
-		if err := d.CommitTx(r.ctx); err != nil {
-			return fmt.Errorf("failed to commit transaction for database %q: %w", alias, err)
-		}
-	}
-	return nil
 }
 
 func (r *Run) rollbackAll() {

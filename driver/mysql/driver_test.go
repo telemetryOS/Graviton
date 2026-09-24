@@ -141,7 +141,7 @@ func Test_Driver_Rollback(t *testing.T) {
 	}
 }
 
-func Test_Driver_Handle_LazilyBeginsTransaction(t *testing.T) {
+func Test_Driver_Handle_WritesWithoutTransaction(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
 
 	drv.db.ExecContext(ctx, "CREATE TABLE test (value TEXT)")
@@ -152,8 +152,8 @@ func Test_Driver_Handle_LazilyBeginsTransaction(t *testing.T) {
 	}
 
 	handle.Exec(&SQLQuery{Query: "INSERT INTO test (value) VALUES (?)", Params: []any{"test"}})
-	if !drv.HasOpenTx() {
-		t.Fatal("handle operation did not lazily begin a transaction")
+	if drv.HasOpenTx() {
+		t.Fatal("ordinary handle opened a transaction")
 	}
 
 	if err := drv.RollbackTx(ctx); err != nil {
@@ -162,8 +162,8 @@ func Test_Driver_Handle_LazilyBeginsTransaction(t *testing.T) {
 
 	var count int
 	drv.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM test").Scan(&count)
-	if count != 0 {
-		t.Errorf("COUNT(*) = %d, want 0 (uncommitted handle write should roll back)", count)
+	if count != 1 {
+		t.Errorf("COUNT(*) = %d, want 1 (ordinary handle writes immediately)", count)
 	}
 }
 

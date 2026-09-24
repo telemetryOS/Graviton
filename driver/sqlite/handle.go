@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+
+	"github.com/telemetryos/graviton/driver/transaction"
 )
 
 type Handle struct {
@@ -83,11 +85,10 @@ func (h *Handle) QueryOne(sqlQuery *SQLQuery) map[string]any {
 	return results[0]
 }
 
-// executor lazily begins this driver's transaction so every JS-facing operation
-// in a migration body joins it, then rolls back or commits as a per-handle unit.
+// executor selects the connection associated with this handle.
 func (h *Handle) executor() sqlExecutor {
-	if _, err := h.driver.ensureTx(h.ctx); err != nil {
-		panic(err)
+	if transaction.Bound(h.ctx) {
+		return h.driver.tx
 	}
-	return h.driver.tx
+	return h.driver.db
 }

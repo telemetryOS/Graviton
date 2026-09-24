@@ -20,6 +20,7 @@ type Collection = {
 // A handle bound to a single configured database. use(alias) returns one of
 // these for any database in graviton.config.toml.
 type DbHandle = {
+  withTransaction: <T>(callback: (db: DbHandle) => Promise<T>) => Promise<T>;
   collection: (name: string) => Collection;
   // Rename this database to newName (a literal physical name) and drop the
   // source. Intended for retiring a database at cutover — e.g. rename it with a

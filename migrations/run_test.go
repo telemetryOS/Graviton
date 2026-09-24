@@ -156,7 +156,8 @@ func Test_ApplyMigration_MarkerWrittenLast(t *testing.T) {
 	body := func() error {
 		a.BeginTx(run.ctx)
 		b.BeginTx(run.ctx)
-		a.BeginTx(run.ctx) // idempotent second touch
+		a.CommitTx(run.ctx)
+		b.CommitTx(run.ctx)
 		return nil
 	}
 
@@ -193,7 +194,8 @@ func Test_ApplyMigration_DataCommitFailure_MarkerNotWritten(t *testing.T) {
 	body := func() error {
 		a.BeginTx(run.ctx)
 		b.BeginTx(run.ctx)
-		return nil
+		a.CommitTx(run.ctx)
+		return b.CommitTx(run.ctx)
 	}
 
 	err := run.ApplyMigration(body, []*migrationsmeta.MigrationMetadata{{Filename: "20240101000000-x.migration.ts"}})
@@ -627,7 +629,7 @@ export function up(g) {
 export function down(g) {}
 `
 
-func Test_Live_InterleavedTwoDatabase_FailureRollsBackBothNoMarker(t *testing.T) {
+func Test_Live_InterleavedTwoDatabase_FailurePreservesImmediateWritesNoMarker(t *testing.T) {
 	run, migrationsDir, dbA, dbB := setupTwoDbRun(t)
 	writeMigration(t, migrationsDir, "20240101000000-fail.migration.ts", interleaveFail)
 
@@ -645,11 +647,11 @@ func Test_Live_InterleavedTwoDatabase_FailureRollsBackBothNoMarker(t *testing.T)
 		t.Fatal("ApplyMigration() error = nil, want error from throwing migration")
 	}
 
-	if got := countDocs(t, dbA, "items"); got != 0 {
-		t.Errorf("db a items = %d, want 0 (should roll back)", got)
+	if got := countDocs(t, dbA, "items"); got != 1 {
+		t.Errorf("db a items = %d, want 1 (immediate write)", got)
 	}
-	if got := countDocs(t, dbB, "items"); got != 0 {
-		t.Errorf("db b items = %d, want 0 (should roll back)", got)
+	if got := countDocs(t, dbB, "items"); got != 1 {
+		t.Errorf("db b items = %d, want 1 (immediate write)", got)
 	}
 
 	applied, err := run.GetApplied()
@@ -662,9 +664,11 @@ func Test_Live_InterleavedTwoDatabase_FailureRollsBackBothNoMarker(t *testing.T)
 }
 
 const renameWithOpenTx = `
-export function up(g) {
-  g.use('b').collection('items').insertOne({ n: 1 })
-  g.use('b').rename('graviton_run_test_b__migrated__')
+export async function up(g) {
+ await g.use('b').withTransaction(async b => {
+  b.collection('items').insertOne({ n: 1 })
+  b.rename('graviton_run_test_b__migrated__')
+ })
 }
 export function down(g) {}
 `

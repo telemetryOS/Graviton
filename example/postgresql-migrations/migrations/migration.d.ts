@@ -10,6 +10,7 @@ type SQLResult = {
 }
 
 type Handle = {
+  withTransaction: <T>(callback: (db: Handle) => Promise<T>) => Promise<T>;
   exec(query: SQLQuery): SQLResult;
   query<T = any>(query: SQLQuery): T[];
   queryOne<T = any>(query: SQLQuery): T | null;
