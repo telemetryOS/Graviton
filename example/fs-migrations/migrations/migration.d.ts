@@ -10,6 +10,7 @@ type FileEntry = {
 // migration. Operations apply immediately — fs databases have no
 // transactions — so write migrations to be idempotent.
 type DbHandle = {
+  withTransaction: <T>(callback: (db: DbHandle) => Promise<T>) => Promise<T>;
   read(path: string): string;
   readBytes(path: string): ArrayBuffer;
   write(path: string, data: string | ArrayBuffer): void;

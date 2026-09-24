@@ -2,6 +2,7 @@ package mongodb
 
 import (
 	"context"
+	"github.com/telemetryos/graviton/driver/transaction"
 	"strings"
 	"testing"
 
@@ -98,11 +99,15 @@ func Test_Driver_RenameDatabase_TargetCollisionErrors(t *testing.T) {
 
 func Test_Driver_RenameDatabase_OpenTransactionErrors(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
+	if err := drv.BeginTx(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ = transaction.New(ctx)
 
 	target := testDatabaseName + "_renamed"
 
 	handle := drv.Handle(ctx).(*MongoHandle)
-	// A collection op lazily opens the driver's transaction.
+	// This handle participates in the explicitly opened transaction.
 	handle.Collection("alpha").InsertOne(bson.M{"n": 1})
 	if !drv.HasOpenTx() {
 		t.Fatal("expected an open transaction after a collection op")

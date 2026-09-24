@@ -2,6 +2,7 @@ package mongodb
 
 import (
 	"context"
+	"github.com/telemetryos/graviton/driver/transaction"
 	"testing"
 	"time"
 
@@ -34,9 +35,6 @@ func setupTestDriver(t *testing.T) (*Driver, context.Context) {
 	}
 
 	t.Cleanup(func() {
-		// A handle operation lazily opens a transaction the collection tests
-		// never commit; abort it before cleaning so the collection drops don't
-		// contend with a lingering transaction.
 		drv.RollbackTx(ctx)
 		cleanDatabase(t, drv, ctx)
 		drv.Disconnect(ctx)
@@ -87,14 +85,18 @@ func Test_Driver_Connect(t *testing.T) {
 
 func Test_Driver_Commit(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
+	if err := drv.BeginTx(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ = transaction.New(ctx)
 
 	handle := drv.Handle(ctx).(*MongoHandle)
 	coll := handle.Collection("test")
 
-	// The first collection operation lazily opens the driver's transaction.
+	// Writes use the explicit transaction associated with the handle.
 	coll.InsertOne(bson.M{"value": "test"})
 	if !drv.HasOpenTx() {
-		t.Fatal("handle operation did not lazily begin a transaction")
+		t.Fatal("explicit transaction is not open")
 	}
 	if err := drv.CommitTx(ctx); err != nil {
 		t.Fatalf("CommitTx() error = %v", err)
@@ -114,6 +116,10 @@ func Test_Driver_Commit(t *testing.T) {
 
 func Test_Driver_Rollback(t *testing.T) {
 	drv, ctx := setupTestDriver(t)
+	if err := drv.BeginTx(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ = transaction.New(ctx)
 
 	handle := drv.Handle(ctx).(*MongoHandle)
 	coll := handle.Collection("test")

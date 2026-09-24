@@ -3,6 +3,7 @@
 // immediately — object stores have no transactions — so write migrations to
 // be idempotent.
 type DbHandle = {
+  withTransaction: <T>(callback: (db: DbHandle) => Promise<T>) => Promise<T>;
   get(key: string): string;        // fails on a missing key
   getBytes(key: string): ArrayBuffer;
   put(key: string, data: string | ArrayBuffer): void;

@@ -91,7 +91,7 @@ graviton create create-users-table
 
 ### Apply Migrations
 
-Run the up command to apply pending migrations. Migrations are executed in chronological order based on their timestamp. Each database a migration touches commits in its own transaction, and the applied-migration marker is written last (see [Migration Model](#migration-model)).
+Run the up command to apply pending migrations. Migrations are executed in chronological order based on their timestamp. Transactions are explicitly scoped with `withTransaction`, and the applied-migration marker is written last (see [Migration Model](#migration-model)).
 
 ```bash
 graviton up
@@ -471,7 +471,7 @@ graviton up
 graviton status
 ```
 
-A migration can touch both databases; each commits in its own transaction and
+A migration can touch both databases; explicit transactions commit independently and
 the marker is written last to `migrations_db`.
 
 ## Migration Model
@@ -483,17 +483,28 @@ before — there is just one directory now.
 
 ### Per-Handle Transactions and Marker-Last
 
-Each database a migration touches gets its **own** session and transaction,
-started lazily on its first operation and interleavable freely within the
-migration body. When the body succeeds:
+Database operations execute immediately unless they use the handle supplied to an explicit transaction callback:
 
-1. Every open data-database transaction commits, each independently.
-2. **Then** the applied-migration marker is written to `migrations_db`, last, in
-   its own transaction.
+```ts
+export async function up(db: Handle) {
+  const accounts = db.use("accounts");
+  await accounts.withTransaction(async accounts => {
+    const users = accounts.collection("users");
+    const user = await users.findOne({ email: "example@example.com" });
+    if (user) await users.updateOne({ _id: user._id }, { $set: { enabled: true } });
+  });
+}
+```
 
-If a data commit fails, still-open transactions roll back, already-committed
-databases stay committed, and the marker is **not** written. If the body errors
-or panics, all open transactions roll back and no marker is written.
+The callback receives another instance of the database handle with the same API,
+bound to the transaction. Its promise must fulfill before commit; rejection rolls
+back the transaction. The original handle remains independent. Transaction handles
+and their collections expire when the callback completes. Each database supports
+one active transaction at a time. Store drivers reject `withTransaction`.
+
+Graviton checks the migration's returned promise before writing the applied marker
+in its own transaction. Immediate writes and completed transactions survive a later
+migration failure. Migrations must be safe to rerun after partial completion.
 
 ### The Migrations Lock
 
@@ -553,7 +564,7 @@ graviton up                      # Apply all pending migrations
 graviton up create-users         # Apply up to and including a specific migration
 ```
 
-Migrations apply one at a time in linear order. If a migration fails, previously applied migrations remain applied; the failed migration's data transactions roll back and its marker is not written, so it re-runs next time (see [Migration Model](#migration-model)).
+Migrations apply one at a time in linear order. If a migration fails, previously applied migrations remain applied; the active transaction rolls back and the failed migration's marker is not written, so it re-runs next time (see [Migration Model](#migration-model)).
 
 ### down
 
@@ -638,6 +649,7 @@ interface Collection {
 
 // A handle bound to a single configured database.
 interface DbHandle {
+  withTransaction<T>(callback: (db: DbHandle) => Promise<T>): Promise<T>
   collection(name: string): Collection
   // Rename this database to a literal physical name and drop the source. See
   // "Retiring databases". Immediate and non-transactional.
@@ -940,8 +952,8 @@ This ensures migrations can be run on fresh database instances and new environme
 
 Transactions are **per handle**, not joint across databases — see
 [Migration Model](#migration-model) for the full contract. Within one migration,
-each database you touch gets its own transaction, and on success they commit
-independently before the applied marker is written. Design migrations to be
+use `withTransaction` to group atomic operations on each database. Successful
+callbacks commit independently before the applied marker is written. Design migrations to be
 idempotent/convergent so that a re-run after a partial commit converges to the
 intended state.
 

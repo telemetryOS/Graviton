@@ -34,12 +34,14 @@ var dummyJsCtorWithRuntime = func(call goja.ConstructorCall, jsvm *goja.Runtime)
 // value hooks (MaybeIntoJSValue/MaybeFromJSValue) and Globals of every active
 // driver are consulted while a migration interleaves work across them.
 type Script struct {
-	ctx     context.Context
-	drivers []driver.Driver
-	handle  any
-	src     string
-	origin  string
-	runtime *goja.Runtime
+	ctx             context.Context
+	drivers         []driver.Driver
+	handle          any
+	src             string
+	origin          string
+	runtime         *goja.Runtime
+	evaluationError error
+	rejections      map[*goja.Promise]goja.Value
 }
 
 type BuildScriptMessage = api.Message
@@ -77,18 +79,41 @@ func buildMigrationSource(path string) (string, *BuildScriptError) {
 	return string(result.OutputFiles[0].Contents), nil
 }
 
-func (s *Script) Up() error {
-	_, err := s.runtime.RunString("migration.up(__g__)")
-	return err
-}
+func (s *Script) Up() error   { return s.execute("up") }
+func (s *Script) Down() error { return s.execute("down") }
 
-func (s *Script) Down() error {
-	_, err := s.runtime.RunString("migration.down(__g__)")
-	return err
+func (s *Script) execute(direction string) error {
+	if s.evaluationError != nil {
+		return s.evaluationError
+	}
+	value, err := s.runtime.RunString("migration." + direction + "(__g__)")
+	if err != nil {
+		return err
+	}
+	if promise, ok := value.Export().(*goja.Promise); ok {
+		switch promise.State() {
+		case goja.PromiseStatePending:
+			return fmt.Errorf("migration returned an unresolved Promise")
+		case goja.PromiseStateRejected:
+			return fmt.Errorf("migration rejected: %s", promise.Result())
+		}
+	}
+	for _, reason := range s.rejections {
+		return fmt.Errorf("unhandled Promise rejection: %s", reason)
+	}
+	return nil
 }
 
 func (s *Script) Evaluate() {
 	s.runtime = goja.New()
+	s.rejections = make(map[*goja.Promise]goja.Value)
+	s.runtime.SetPromiseRejectionTracker(func(p *goja.Promise, operation goja.PromiseRejectionOperation) {
+		if operation == goja.PromiseRejectionReject {
+			s.rejections[p] = p.Result()
+		} else {
+			delete(s.rejections, p)
+		}
+	})
 	s.runtime.Set("console", JSConsole(s.runtime))
 	// Driver-agnostic built-ins: every migration gets these regardless of
 	// which databases it touches, so they are set here rather than coming
@@ -115,7 +140,7 @@ func (s *Script) Evaluate() {
 		}
 	}
 
-	s.runtime.RunScript(s.origin, s.src)
+	_, s.evaluationError = s.runtime.RunScript(s.origin, s.src)
 }
 
 func (s *Script) intoJs(vr reflect.Value) goja.Value {
@@ -182,6 +207,11 @@ func (s *Script) intoJs(vr reflect.Value) goja.Value {
 		return obj
 	case reflect.Struct:
 		obj := s.runtime.NewObject()
+		if vr.CanAddr() {
+			if h, ok := vr.Addr().Interface().(*Handle); ok {
+				obj.Set("withTransaction", s.withTransaction(h))
+			}
+		}
 		for i := 0; i < vr.NumField(); i += 1 {
 			field := vr.Type().Field(i)
 			if unicode.IsUpper(rune(field.Name[0])) {
@@ -219,6 +249,14 @@ func (s *Script) intoJs(vr reflect.Value) goja.Value {
 
 		default:
 			return s.runtime.ToValue(func(call goja.FunctionCall) goja.Value {
+				defer func() {
+					if recovered := recover(); recovered != nil {
+						if value, ok := recovered.(goja.Value); ok {
+							panic(value)
+						}
+						panic(s.runtime.NewGoError(fmt.Errorf("%v", recovered)))
+					}
+				}()
 				argsVrs := []reflect.Value{}
 				for i, arg := range call.Arguments {
 					argsVrs = append(argsVrs, argValue(tr, i, s.fromJs(arg)))

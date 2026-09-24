@@ -45,16 +45,12 @@ type Driver interface {
 	// `graviton unlock`, the escape hatch for locks left by crashed runs.
 	ClearMigrationsLock(ctx context.Context) error
 
-	// BeginTx opens a transaction if one is not already open. It is idempotent:
-	// the JS-facing handles lazily begin a transaction on their first operation,
-	// and the runner may also begin one explicitly (e.g. to write the applied
-	// marker). Calling BeginTx while a transaction is already open is a no-op.
+	// BeginTx opens a transaction for an explicit callback or marker write.
 	BeginTx(ctx context.Context) error
 	// CommitTx commits the open transaction, if any, and leaves the driver ready
 	// to begin another. It is a no-op when no transaction is open.
 	CommitTx(ctx context.Context) error
-	// RollbackTx aborts the open transaction, if any. It is a no-op when no
-	// transaction is open and never returns an error the caller must act on.
+	// RollbackTx aborts the open transaction, if any.
 	RollbackTx(ctx context.Context) error
 	// HasOpenTx reports whether a transaction is currently open on this driver.
 	HasOpenTx() bool
@@ -68,27 +64,6 @@ type Driver interface {
 	// scripts as their proper JS representation instead of the generic
 	// reflection-based conversion.
 	MaybeIntoJSValue(ctx context.Context, runtime *goja.Runtime, value any) (goja.Value, bool)
-}
-
-// TransactionDisabler is implemented by drivers that normally wrap a
-// migration's writes in a transaction and are able to run without one.
-//
-// It exists for datasets whose writes cannot fit in a single transaction: a
-// MongoDB transaction is bounded by transactionLifetimeLimitSeconds and by a
-// hard 16MB total oplog size, and a large ETL exceeds both. Running such a
-// migration without a transaction is the operator's explicit choice, made per
-// run with `up --no-transactions`, never a default or a silent fallback.
-//
-// The trade is atomicity: a migration that fails partway leaves the writes it
-// already made in place. That is only safe for idempotent, convergent
-// migrations, which re-runs bring to the same result. Graviton's recovery model
-// already leans on that property — the applied marker is written last, so an
-// interrupted migration stays unmarked and re-runs.
-//
-// Drivers with no transactions to disable (fs, s3, redis) simply do not
-// implement it.
-type TransactionDisabler interface {
-	DisableTransactions()
 }
 
 // ValidateDatabaseConfig statically checks one [[databases]] entry beyond the

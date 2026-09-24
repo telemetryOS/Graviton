@@ -1,7 +1,7 @@
-export function up(db: Handle) {
+export async function up(db: Handle) {
   // TODO: Apply migration changes here
 }
 
-export function down(db: Handle) {
+export async function down(db: Handle) {
   // TODO: Rollback migration changes here
 }

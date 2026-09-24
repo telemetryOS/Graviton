@@ -2,6 +2,7 @@
 // Operations apply immediately — the driver does not use MULTI/EXEC — so
 // write migrations to be idempotent.
 type DbHandle = {
+  withTransaction: <T>(callback: (db: DbHandle) => Promise<T>) => Promise<T>;
   get(key: string): string | null;
   set(key: string, value: any, ttlSeconds?: number): void;
   del(...keys: string[]): number;

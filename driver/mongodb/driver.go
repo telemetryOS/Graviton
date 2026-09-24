@@ -40,13 +40,6 @@ type Driver struct {
 	session    mongo.Session
 	sessionCtx mongo.SessionContext
 	inTx       bool
-
-	// noTx runs this driver's operations outside any transaction, set by
-	// DisableTransactions for a run the operator started with
-	// --no-transactions. Operations still go through the session, so they keep
-	// causal consistency; they are simply not wrapped in a transaction, and
-	// inTx therefore stays false so commit and rollback become no-ops.
-	noTx bool
 }
 
 // New builds a MongoDB driver for conf.
@@ -215,32 +208,6 @@ func (d *Driver) SetAppliedMigrationsMetadata(ctx context.Context, migrationsMet
 	return err
 }
 
-// DisableTransactions switches this driver to running operations without a
-// transaction for the rest of the run. See driver.TransactionDisabler for when
-// that is the right call and what it costs.
-func (d *Driver) DisableTransactions() {
-	d.noTx = true
-}
-
-// ensureSessionCtx returns a session context with no transaction on it, used
-// only when transactions are disabled. The session is created lazily and the
-// context cached, mirroring the transactional path so that operations still
-// share one session per database per run.
-func (d *Driver) ensureSessionCtx(ctx context.Context) (mongo.SessionContext, error) {
-	if d.sessionCtx != nil {
-		return d.sessionCtx, nil
-	}
-	if d.session == nil {
-		session, err := d.client.StartSession()
-		if err != nil {
-			return nil, err
-		}
-		d.session = session
-	}
-	d.sessionCtx = mongo.NewSessionContext(ctx, d.session)
-	return d.sessionCtx, nil
-}
-
 // BeginTx opens a transaction on this driver's session if one is not already
 // open, creating the session lazily on first use.
 func (d *Driver) BeginTx(ctx context.Context) error {
@@ -250,11 +217,8 @@ func (d *Driver) BeginTx(ctx context.Context) error {
 
 // ensureTx returns the session context bound to this driver's open transaction,
 // beginning one (and lazily creating the session) if none is open yet. It is
-// the shared path behind both BeginTx and the JS-facing collection operations.
+// the implementation of BeginTx.
 func (d *Driver) ensureTx(ctx context.Context) (mongo.SessionContext, error) {
-	if d.noTx {
-		return d.ensureSessionCtx(ctx)
-	}
 	if d.inTx {
 		return d.sessionCtx, nil
 	}
@@ -280,10 +244,12 @@ func (d *Driver) CommitTx(ctx context.Context) error {
 	if !d.inTx {
 		return nil
 	}
-	err := d.commitWithRetry(ctx)
+	if err := d.commitWithRetry(ctx); err != nil {
+		return err
+	}
 	d.inTx = false
 	d.sessionCtx = nil
-	return err
+	return nil
 }
 
 func (d *Driver) commitWithRetry(ctx context.Context) error {
@@ -391,11 +357,7 @@ func (d *Driver) nonSystemCollectionNames(ctx context.Context) ([]string, error)
 	return names, nil
 }
 
-// opCtx returns the context that binds an operation to this driver's open
-// transaction, or the plain context when none is open. Unlike the JS-facing
-// collection surface (which lazily begins a transaction), tracking reads and
-// writes never start one implicitly — status reads run outside a transaction,
-// and the marker write is wrapped in an explicit BeginTx by the runner.
+// opCtx binds metadata operations to an explicitly opened transaction.
 func (d *Driver) opCtx(ctx context.Context) context.Context {
 	if d.inTx {
 		return d.sessionCtx
