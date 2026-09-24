@@ -34,6 +34,7 @@ type FileEntry = {
 // Write store migrations to be idempotent/convergent so a re-run after a
 // partial failure is safe.
 type DbHandle = {
+  runCommand: (name: string, value: any, parameters?: Record<string, any>) => any;
   withTransaction: <T>(callback: (db: DbHandle) => Promise<T>) => Promise<T>;
   // ---- mongodb ----
   collection: (name: string) => Collection;

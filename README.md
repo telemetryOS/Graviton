@@ -1023,3 +1023,17 @@ Tests verify transaction atomicity, error handling, panic recovery, and migratio
 ## License
 
 MIT License - see LICENSE file for details
+
+### MongoDB database commands
+
+MongoDB handles expose `runCommand(name, value, parameters?)` for database
+operations such as index transitions. Commands use the handle's transaction
+context. MongoDB requires index creation and removal on existing collections to
+run outside a transaction callback.
+
+```ts
+const integrations = db.use("integrations");
+integrations.runCommand("createIndexes", "notification_settings", {
+  indexes: [{ key: { accountId: 1 }, name: "accountId_1", unique: true }],
+});
+```
