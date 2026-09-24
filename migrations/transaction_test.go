@@ -85,3 +85,28 @@ func TestStoreRejectsTransaction(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestMongoRunCommandIndexes(t *testing.T) {
+	run, _, _, _ := setupTwoDbRun(t)
+	script := run.newScript(`var migration = {async up(db) {
+  const database = db.use('b');
+  database.runCommand('createIndexes', 'settings', {indexes:[{key:{accountId:1},name:'accountId_1',unique:true}]});
+  const indexes = database.runCommand('listIndexes','settings').cursor.firstBatch;
+  if (!indexes.some(index => index.name === 'accountId_1' && index.unique)) throw Error('index was not created');
+  await database.withTransaction(async database => {
+    database.runCommand('insert','settings',{documents:[{accountId:'fixture'}]});
+  });
+  try {
+    await database.withTransaction(async database => {
+      database.runCommand('insert','settings',{documents:[{accountId:'rollback'}]});
+      throw Error('rollback');
+    });
+  } catch (_) {}
+  if (database.collection('settings').find({}).length !== 1) throw Error('command did not use the transaction');
+  database.runCommand('dropIndexes','settings',{index:'accountId_1'});
+  if (database.runCommand('listIndexes','settings').cursor.firstBatch.some(index => index.name === 'accountId_1')) throw Error('index was not dropped');
+ }} `, "mongo-commands")
+	if err := run.ApplyMigration(script.Up, nil); err != nil {
+		t.Fatal(err)
+	}
+}

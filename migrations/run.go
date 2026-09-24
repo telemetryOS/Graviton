@@ -264,6 +264,14 @@ func (h *Handle) CopyTo(destAlias string, src string, dst string) {
 	}
 }
 
+func (h *Handle) RunCommand(name string, value any, parameters ...map[string]any) any {
+	args := []any{name, value}
+	for _, fields := range parameters {
+		args = append(args, fields)
+	}
+	return h.delegate("RunCommand", args...)
+}
+
 func (h *Handle) Collection(name string) any { return h.delegate("Collection", name) }
 func (h *Handle) Exec(query any) any         { return h.delegate("Exec", query) }
 func (h *Handle) Query(query any) any        { return h.delegate("Query", query) }
